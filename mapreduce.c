@@ -4,10 +4,11 @@
 #include <pthread.h>
 #include <assert.h>
 #include <string.h>
+#include <time.h>
 
 // -------------- Sizes --------------
 #define INITIAL_PARTITION_CAPACITY 8
-#define INPUT_FILE_BUF_CAP 10
+#define INPUT_FILE_BUF_CAP 4
 
 // -------------- Pthread Wrappers --------------
 void Pthread_mutex_lock(pthread_mutex_t *mutex){
@@ -66,6 +67,7 @@ typedef struct __input_bounded_buffer__ {
     char** file_arr;
     size_t capacity;
     size_t cur_size, cur_cons, cur_prod;
+    char finish;
 } Input_buffer;
 
 // -------------- Global Data Structures --------------
@@ -90,7 +92,7 @@ int MR_partition_expand(Partition* ptn){
     Entry* tmpEntry = realloc(ptn->data, sizeof(Entry) * ptn->capacity);
     if(tmpEntry == NULL) return -1;
     ptn->data = tmpEntry;
-    tmpEntry = tmpEntry + ptn->capacity - 1;
+    tmpEntry = tmpEntry + ptn->capacity - 1; // Setting the last `data` entry to be null pointer
     tmpEntry = NULL; 
     return 0;
     // Needs to release the lock afterwards
@@ -135,19 +137,26 @@ unsigned long MR_DefaultHashPartition(char *key, int num_partitions) {
 
 void* MR_Mapper(void* arg){
     char* file_name;
-    Pthread_mutex_lock(&input_buffer.lock);
-    while(input_buffer.cur_size == 0)
-        Pthread_cond_wait(&input_buffer.wake_consumer, &input_buffer.lock);
-    file_name = strdup(input_buffer.file_arr[input_buffer.cur_cons]);
-    free(input_buffer.file_arr[input_buffer.cur_cons]);
-    input_buffer.file_arr[input_buffer.cur_cons] = NULL;
-    ++input_buffer.cur_cons;
-    input_buffer.cur_cons %= input_buffer.capacity;
-    --input_buffer.cur_size;
-    Pthread_cond_signal(&input_buffer.wake_producer);
-    Pthread_mutex_unlock(&input_buffer.lock);
-    mapper(file_name);
-    free(file_name);
+    while(1){
+        Pthread_mutex_lock(&input_buffer.lock);
+        while(input_buffer.cur_size == 0 && input_buffer.finish == 0)
+            Pthread_cond_wait(&input_buffer.wake_consumer, &input_buffer.lock);
+        if(input_buffer.cur_size == 0 && input_buffer.finish == 1){ 
+            // No more input to work on. Aborting.
+            Pthread_mutex_unlock(&input_buffer.lock);
+            break;
+        }
+        file_name = strdup(input_buffer.file_arr[input_buffer.cur_cons]);
+        free(input_buffer.file_arr[input_buffer.cur_cons]);
+        input_buffer.file_arr[input_buffer.cur_cons] = NULL;
+        ++input_buffer.cur_cons;
+        input_buffer.cur_cons %= input_buffer.capacity;
+        --input_buffer.cur_size;
+        Pthread_cond_signal(&input_buffer.wake_producer);
+        Pthread_mutex_unlock(&input_buffer.lock);
+        mapper(file_name);
+        free(file_name);
+    }
     return NULL;
 }
 
@@ -182,16 +191,31 @@ void* MR_Reducer(void* arg){
 }
 
 void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce, int num_reducers, Partitioner partition){
+    // -------------- 0. Printout current settings. start timer --------------
+    fprintf(stderr, "======================================\n");
+    fprintf(stderr, "INPUT_FILE_BUF_CAP:\t\t%d\n",       INPUT_FILE_BUF_CAP);
+    fprintf(stderr, "Number of Mappers:\t\t%d\n",        num_mappers);
+    fprintf(stderr, "Number of Reducers:\t\t%d\n",       num_reducers);
+    fprintf(stderr, "Number of input files:\t\t%d\n",    argc - 1);
+    // char **fname = argv + 1;
+    // while(*fname != NULL){
+    //     fprintf(stderr, "Filename:\t\t%s\n",             *fname);
+    //     fname++;
+    // }
+    fprintf(stderr, "--------------------------------------\n");
+    clock_t begin = clock();
+    fprintf(stderr, "Start time:\t\t%ld\n", begin);
+
     // -------------- 1. Initialization. Create partitions. --------------
-    // Initialize local threads
-    pthread_t mapper_thread[num_mappers], reducer_thread[num_reducers];
-    
     // Initialize global variables
     num_partitions = num_reducers;
     current_partitioner = partition;
     mapper = map;
     reducer = reduce;
 
+    // Initialize local threads
+    pthread_t mapper_thread[num_mappers], sort_thread[num_partitions], reducer_thread[num_reducers];
+    
     // Initialize global data structures
         // Partition array
     partition_arr = Malloc(sizeof(Partition) * num_partitions);
@@ -207,6 +231,7 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
     input_buffer.file_arr = Malloc(sizeof(char*) * INPUT_FILE_BUF_CAP);
     input_buffer.capacity = INPUT_FILE_BUF_CAP;
     input_buffer.cur_size = input_buffer.cur_cons = input_buffer.cur_prod = 0;
+    input_buffer.finish = 0; // false
     pthread_mutex_init(&input_buffer.lock, NULL);
     pthread_cond_init(&input_buffer.wake_producer, NULL);
     pthread_cond_init(&input_buffer.wake_consumer, NULL);
@@ -228,17 +253,23 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
         Pthread_cond_broadcast(&input_buffer.wake_consumer);
         Pthread_mutex_unlock(&input_buffer.lock);
     }
+    // Finish all input creation. Change the variable `finish` to 1. Broadcast.
+    Pthread_mutex_lock(&input_buffer.lock);
+    input_buffer.finish = 1; // true
+    Pthread_cond_broadcast(&input_buffer.wake_consumer);
+    Pthread_mutex_unlock(&input_buffer.lock);
 
     // -------------- 4. Join mappers, sort partitions --------------
     for(int i = 0; i < num_mappers; ++i)
         Pthread_join(mapper_thread[i], NULL);
-    for(int i = 0; i < num_reducers; ++i)
-        Pthread_create(&reducer_thread[i], NULL, MR_sort, &partition_arr[i]);
-    for(int i = 0; i < num_reducers; ++i)
-        Pthread_join(reducer_thread[i], NULL);
+    for(int i = 0; i < num_partitions; ++i)
+        Pthread_create(&sort_thread[i], NULL, MR_sort, &partition_arr[i]);
+    for(int i = 0; i < num_partitions; ++i)
+        Pthread_join(sort_thread[i], NULL);
 
     // -------------- 5. Reducers build Keyinfo and then reduce keys --------------
     for(int i = 0; i < num_reducers; ++i)
+        // assume num_reducers == num_partitions
         Pthread_create(&reducer_thread[i], NULL, MR_Reducer, &partition_arr[i]);
     for(int i = 0; i < num_reducers; ++i)
         Pthread_join(reducer_thread[i], NULL);
@@ -261,4 +292,10 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
         free(partition_arr[i].data);
     }
     free(partition_arr);
+
+    // -------------- 0. End timer. Output duration -------------
+    clock_t end = clock();
+    fprintf(stderr, "End time:\t\t%ld\n", end);
+    fprintf(stderr, "Duration in sec:\t%.3f\n", (double)(end - begin) / CLOCKS_PER_SEC);
+    fprintf(stderr, "======================================\n");
 }
