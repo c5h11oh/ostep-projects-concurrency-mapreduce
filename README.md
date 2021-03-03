@@ -29,7 +29,7 @@ There are three files forming up the program: `mapreduce.h`, `mapreduce.c`, and 
 - After mapper mapped the key-value pair to appropriate "partitions" (buckets), `MR_sort` sorts all elements in each partition in order to make the reducer's life easier.
 
 #### MR_Reducer
-- One reducer is responsible for dealing with one partition. It has to retrieve the 
+- One `MR_Reducer` is responsible for dealing with one partition. It calls the user defined `reducer` for each key in its own partition.
 
 #### MR_Emit
 - In the user defined `mapper` function, one calls `MR_Emit` to emit (send) the key-value pair to the appropriate partition (bucket). `MR_DefaultHashPartition` determines which bucket is appropriate for a certain key.
