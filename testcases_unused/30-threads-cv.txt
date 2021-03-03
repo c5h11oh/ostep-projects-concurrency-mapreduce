@@ -1,0 +1,1512 @@
+30
+Condition Variables
+
+Thus far we have developed the notion of a lock and seen how one can be
+properly built with the right combination of hardware and OS support.
+Unfortunately, locks are not the only primitives that are needed to build
+concurrent programs.
+In particular, there are many cases where a thread wishes to check
+whether a condition is true before continuing its execution. For example,
+a parent thread might wish to check whether a child thread has completed
+before continuing (this is often called a join()); how should such a wait
+be implemented? Let’s look at Figure 30.1.
+1
+2
+3
+4
+5
+
+void *child(void *arg) {
+printf("child\n");
+// XXX how to indicate we are done?
+return NULL;
+}
+
+6
+7
+8
+9
+10
+11
+12
+13
+14
+
+int main(int argc, char *argv[]) {
+printf("parent: begin\n");
+pthread_t c;
+Pthread_create(&c, NULL, child, NULL); // create child
+// XXX how to wait for child?
+printf("parent: end\n");
+return 0;
+}
+Figure 30.1: A Parent Waiting For Its Child
+What we would like to see here is the following output:
+parent: begin
+child
+parent: end
+We could try using a shared variable, as you see in Figure 30.2. This
+solution will generally work, but it is hugely inefficient as the parent spins
+1
+
+2
+1
+
+C ONDITION VARIABLES
+
+volatile int done = 0;
+
+2
+3
+4
+5
+6
+7
+
+void *child(void *arg) {
+printf("child\n");
+done = 1;
+return NULL;
+}
+
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+
+int main(int argc, char *argv[]) {
+printf("parent: begin\n");
+pthread_t c;
+Pthread_create(&c, NULL, child, NULL); // create child
+while (done == 0)
+; // spin
+printf("parent: end\n");
+return 0;
+}
+Figure 30.2: Parent Waiting For Child: Spin-based Approach
+and wastes CPU time. What we would like here instead is some way to
+put the parent to sleep until the condition we are waiting for (e.g., the
+child is done executing) comes true.
+T HE C RUX : H OW T O WAIT F OR A C ONDITION
+In multi-threaded programs, it is often useful for a thread to wait for
+some condition to become true before proceeding. The simple approach,
+of just spinning until the condition becomes true, is grossly inefficient
+and wastes CPU cycles, and in some cases, can be incorrect. Thus, how
+should a thread wait for a condition?
+
+30.1
+
+Definition and Routines
+To wait for a condition to become true, a thread can make use of what
+is known as a condition variable. A condition variable is an explicit
+queue that threads can put themselves on when some state of execution
+(i.e., some condition) is not as desired (by waiting on the condition);
+some other thread, when it changes said state, can then wake one (or
+more) of those waiting threads and thus allow them to continue (by signaling on the condition). The idea goes back to Dijkstra’s use of “private
+semaphores” [D68]; a similar idea was later named a “condition variable”
+by Hoare in his work on monitors [H74].
+To declare such a condition variable, one simply writes something
+like this: pthread cond t c;, which declares c as a condition variable
+(note: proper initialization is also required). A condition variable has two
+operations associated with it: wait() and signal(). The wait() call
+is executed when a thread wishes to put itself to sleep; the signal() call
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+C ONDITION VARIABLES
+1
+2
+3
+
+3
+
+int done = 0;
+pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t c = PTHREAD_COND_INITIALIZER;
+
+4
+5
+6
+7
+8
+9
+10
+
+void thr_exit() {
+Pthread_mutex_lock(&m);
+done = 1;
+Pthread_cond_signal(&c);
+Pthread_mutex_unlock(&m);
+}
+
+11
+12
+13
+14
+15
+16
+
+void *child(void *arg) {
+printf("child\n");
+thr_exit();
+return NULL;
+}
+
+17
+18
+19
+20
+21
+22
+23
+
+void thr_join() {
+Pthread_mutex_lock(&m);
+while (done == 0)
+Pthread_cond_wait(&c, &m);
+Pthread_mutex_unlock(&m);
+}
+
+24
+25
+26
+27
+28
+29
+30
+31
+32
+
+int main(int argc, char *argv[]) {
+printf("parent: begin\n");
+pthread_t p;
+Pthread_create(&p, NULL, child, NULL);
+thr_join();
+printf("parent: end\n");
+return 0;
+}
+Figure 30.3: Parent Waiting For Child: Use A Condition Variable
+is executed when a thread has changed something in the program and
+thus wants to wake a sleeping thread waiting on this condition. Specifically, the POSIX calls look like this:
+pthread_cond_wait(pthread_cond_t *c, pthread_mutex_t *m);
+pthread_cond_signal(pthread_cond_t *c);
+We will often refer to these as wait() and signal() for simplicity.
+One thing you might notice about the wait() call is that it also takes a
+mutex as a parameter; it assumes that this mutex is locked when wait()
+is called. The responsibility of wait() is to release the lock and put the
+calling thread to sleep (atomically); when the thread wakes up (after some
+other thread has signaled it), it must re-acquire the lock before returning
+to the caller. This complexity stems from the desire to prevent certain
+
+© 2008–20, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+4
+
+C ONDITION VARIABLES
+
+race conditions from occurring when a thread is trying to put itself to
+sleep. Let’s take a look at the solution to the join problem (Figure 30.3) to
+understand this better.
+There are two cases to consider. In the first, the parent creates the child
+thread but continues running itself (assume we have only a single processor) and thus immediately calls into thr join() to wait for the child
+thread to complete. In this case, it will acquire the lock, check if the child
+is done (it is not), and put itself to sleep by calling wait() (hence releasing the lock). The child will eventually run, print the message “child”,
+and call thr exit() to wake the parent thread; this code just grabs the
+lock, sets the state variable done, and signals the parent thus waking it.
+Finally, the parent will run (returning from wait() with the lock held),
+unlock the lock, and print the final message “parent: end”.
+In the second case, the child runs immediately upon creation, sets
+done to 1, calls signal to wake a sleeping thread (but there is none, so
+it just returns), and is done. The parent then runs, calls thr join(), sees
+that done is 1, and thus does not wait and returns.
+One last note: you might observe the parent uses a while loop instead
+of just an if statement when deciding whether to wait on the condition.
+While this does not seem strictly necessary per the logic of the program,
+it is always a good idea, as we will see below.
+To make sure you understand the importance of each piece of the
+thr exit() and thr join() code, let’s try a few alternate implementations. First, you might be wondering if we need the state variable done.
+What if the code looked like the example below? (Figure 30.4)
+Unfortunately this approach is broken. Imagine the case where the
+child runs immediately and calls thr exit() immediately; in this case,
+the child will signal, but there is no thread asleep on the condition. When
+the parent runs, it will simply call wait and be stuck; no thread will ever
+wake it. From this example, you should appreciate the importance of
+the state variable done; it records the value the threads are interested in
+knowing. The sleeping, waking, and locking all are built around it.
+1
+2
+3
+4
+5
+
+void thr_exit() {
+Pthread_mutex_lock(&m);
+Pthread_cond_signal(&c);
+Pthread_mutex_unlock(&m);
+}
+
+6
+7
+8
+9
+10
+11
+
+void thr_join() {
+Pthread_mutex_lock(&m);
+Pthread_cond_wait(&c, &m);
+Pthread_mutex_unlock(&m);
+}
+Figure 30.4: Parent Waiting: No State Variable
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+C ONDITION VARIABLES
+1
+2
+3
+4
+
+5
+
+void thr_exit() {
+done = 1;
+Pthread_cond_signal(&c);
+}
+
+5
+6
+7
+8
+9
+
+void thr_join() {
+if (done == 0)
+Pthread_cond_wait(&c);
+}
+Figure 30.5: Parent Waiting: No Lock
+Here (Figure 30.5) is another poor implementation. In this example,
+we imagine that one does not need to hold a lock in order to signal and
+wait. What problem could occur here? Think about it1 !
+The issue here is a subtle race condition. Specifically, if the parent calls
+thr join() and then checks the value of done, it will see that it is 0 and
+thus try to go to sleep. But just before it calls wait to go to sleep, the parent
+is interrupted, and the child runs. The child changes the state variable
+done to 1 and signals, but no thread is waiting and thus no thread is
+woken. When the parent runs again, it sleeps forever, which is sad.
+Hopefully, from this simple join example, you can see some of the basic requirements of using condition variables properly. To make sure you
+understand, we now go through a more complicated example: the producer/consumer or bounded-buffer problem.
+T IP : A LWAYS H OLD T HE L OCK W HILE S IGNALING
+Although it is strictly not necessary in all cases, it is likely simplest and
+best to hold the lock while signaling when using condition variables. The
+example above shows a case where you must hold the lock for correctness; however, there are some other cases where it is likely OK not to, but
+probably is something you should avoid. Thus, for simplicity, hold the
+lock when calling signal.
+The converse of this tip, i.e., hold the lock when calling wait, is not just
+a tip, but rather mandated by the semantics of wait, because wait always
+(a) assumes the lock is held when you call it, (b) releases said lock when
+putting the caller to sleep, and (c) re-acquires the lock just before returning. Thus, the generalization of this tip is correct: hold the lock when
+calling signal or wait, and you will always be in good shape.
+
+1
+Note that this example is not “real” code, because the call to pthread cond wait()
+always requires a mutex as well as a condition variable; here, we just pretend that the interface
+does not do so for the sake of the negative example.
+
+© 2008–20, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+6
+1
+2
+
+C ONDITION VARIABLES
+
+int buffer;
+int count = 0; // initially, empty
+
+3
+4
+5
+6
+7
+8
+
+void put(int value) {
+assert(count == 0);
+count = 1;
+buffer = value;
+}
+
+9
+10
+11
+12
+13
+14
+
+30.2
+
+int get() {
+assert(count == 1);
+count = 0;
+return buffer;
+}
+Figure 30.6: The Put And Get Routines (v1)
+
+The Producer/Consumer (Bounded Buffer) Problem
+The next synchronization problem we will confront in this chapter is
+known as the producer/consumer problem, or sometimes as the bounded
+buffer problem, which was first posed by Dijkstra [D72]. Indeed, it was
+this very producer/consumer problem that led Dijkstra and his co-workers
+to invent the generalized semaphore (which can be used as either a lock
+or a condition variable) [D01]; we will learn more about semaphores later.
+Imagine one or more producer threads and one or more consumer
+threads. Producers generate data items and place them in a buffer; consumers grab said items from the buffer and consume them in some way.
+This arrangement occurs in many real systems. For example, in a
+multi-threaded web server, a producer puts HTTP requests into a work
+queue (i.e., the bounded buffer); consumer threads take requests out of
+this queue and process them.
+A bounded buffer is also used when you pipe the output of one program into another, e.g., grep foo file.txt | wc -l. This example
+runs two processes concurrently; grep writes lines from file.txt with
+the string foo in them to what it thinks is standard output; the U NIX
+shell redirects the output to what is called a U NIX pipe (created by the
+pipe system call). The other end of this pipe is connected to the standard input of the process wc, which simply counts the number of lines in
+the input stream and prints out the result. Thus, the grep process is the
+producer; the wc process is the consumer; between them is an in-kernel
+bounded buffer; you, in this example, are just the happy user.
+Because the bounded buffer is a shared resource, we must of course
+require synchronized access to it, lest2 a race condition arise. To begin to
+understand this problem better, let us examine some actual code.
+The first thing we need is a shared buffer, into which a producer puts
+data, and out of which a consumer takes data. Let’s just use a single
+2
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+This is where we drop some serious Old English on you, and the subjunctive form.
+
+WWW. OSTEP. ORG
+
+C ONDITION VARIABLES
+1
+2
+3
+4
+5
+6
+7
+
+7
+
+void *producer(void *arg) {
+int i;
+int loops = (int) arg;
+for (i = 0; i < loops; i++) {
+put(i);
+}
+}
+
+8
+9
+10
+11
+12
+13
+14
+
+void *consumer(void *arg) {
+while (1) {
+int tmp = get();
+printf("%d\n", tmp);
+}
+}
+Figure 30.7: Producer/Consumer Threads (v1)
+integer for simplicity (you can certainly imagine placing a pointer to a
+data structure into this slot instead), and the two inner routines to put
+a value into the shared buffer, and to get a value out of the buffer. See
+Figure 30.6 (page 6) for details.
+Pretty simple, no? The put() routine assumes the buffer is empty
+(and checks this with an assertion), and then simply puts a value into the
+shared buffer and marks it full by setting count to 1. The get() routine
+does the opposite, setting the buffer to empty (i.e., setting count to 0)
+and returning the value. Don’t worry that this shared buffer has just a
+single entry; later, we’ll generalize it to a queue that can hold multiple
+entries, which will be even more fun than it sounds.
+Now we need to write some routines that know when it is OK to access
+the buffer to either put data into it or get data out of it. The conditions for
+this should be obvious: only put data into the buffer when count is zero
+(i.e., when the buffer is empty), and only get data from the buffer when
+count is one (i.e., when the buffer is full). If we write the synchronization
+code such that a producer puts data into a full buffer, or a consumer gets
+data from an empty one, we have done something wrong (and in this
+code, an assertion will fire).
+This work is going to be done by two types of threads, one set of which
+we’ll call the producer threads, and the other set which we’ll call consumer threads. Figure 30.7 shows the code for a producer that puts an
+integer into the shared buffer loops number of times, and a consumer
+that gets the data out of that shared buffer (forever), each time printing
+out the data item it pulled from the shared buffer.
+
+A Broken Solution
+Now imagine that we have just a single producer and a single consumer.
+Obviously the put() and get() routines have critical sections within
+them, as put() updates the buffer, and get() reads from it. However,
+putting a lock around the code doesn’t work; we need something more.
+
+© 2008–20, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+8
+1
+2
+3
+
+C ONDITION VARIABLES
+
+int loops; // must initialize somewhere...
+cond_t cond;
+mutex_t mutex;
+
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+
+void *producer(void *arg) {
+int i;
+for (i = 0; i < loops; i++) {
+Pthread_mutex_lock(&mutex);
+if (count == 1)
+Pthread_cond_wait(&cond, &mutex);
+put(i);
+Pthread_cond_signal(&cond);
+Pthread_mutex_unlock(&mutex);
+}
+}
+
+//
+//
+//
+//
+//
+//
+
+p1
+p2
+p3
+p4
+p5
+p6
+
+//
+//
+//
+//
+//
+//
+
+c1
+c2
+c3
+c4
+c5
+c6
+
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+
+void *consumer(void *arg) {
+int i;
+for (i = 0; i < loops; i++) {
+Pthread_mutex_lock(&mutex);
+if (count == 0)
+Pthread_cond_wait(&cond, &mutex);
+int tmp = get();
+Pthread_cond_signal(&cond);
+Pthread_mutex_unlock(&mutex);
+printf("%d\n", tmp);
+}
+}
+
+Figure 30.8: Producer/Consumer: Single CV And If Statement
+Not surprisingly, that something more is some condition variables. In this
+(broken) first try (Figure 30.8), we have a single condition variable cond
+and associated lock mutex.
+Let’s examine the signaling logic between producers and consumers.
+When a producer wants to fill the buffer, it waits for it to be empty (p1–
+p3). The consumer has the exact same logic, but waits for a different
+condition: fullness (c1–c3).
+With just a single producer and a single consumer, the code in Figure
+30.8 works. However, if we have more than one of these threads (e.g.,
+two consumers), the solution has two critical problems. What are they?
+... (pause here to think) ...
+Let’s understand the first problem, which has to do with the if statement before the wait. Assume there are two consumers (Tc1 and Tc2 ) and
+one producer (Tp ). First, a consumer (Tc1 ) runs; it acquires the lock (c1),
+checks if any buffers are ready for consumption (c2), and finding that
+none are, waits (c3) (which releases the lock).
+Then the producer (Tp ) runs. It acquires the lock (p1), checks if all
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+Tc1
+
+State
+
+c1
+c2
+c3
+
+Run
+Run
+Sleep
+Sleep
+Sleep
+Sleep
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Run
+
+c4
+
+Tc2
+
+c1
+c2
+c4
+c5
+c6
+
+9
+
+State
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Run
+Run
+Run
+Run
+Run
+Ready
+
+Tp
+
+p1
+p2
+p4
+p5
+p6
+p1
+p2
+p3
+
+State
+
+Count
+
+C ONDITION VARIABLES
+
+Ready
+Ready
+Ready
+Run
+Run
+Run
+Run
+Run
+Run
+Run
+Sleep
+Sleep
+Sleep
+Sleep
+Ready
+Ready
+Ready
+
+0
+0
+0
+0
+0
+1
+1
+1
+1
+1
+1
+1
+1
+0
+0
+0
+0
+
+Comment
+
+Nothing to get
+Buffer now full
+Tc1 awoken
+
+Buffer full; sleep
+Tc2 sneaks in ...
+... and grabs data
+Tp awoken
+Oh oh! No data
+
+Figure 30.9: Thread Trace: Broken Solution (v1)
+buffers are full (p2), and finding that not to be the case, goes ahead and
+fills the buffer (p4). The producer then signals that a buffer has been
+filled (p5). Critically, this moves the first consumer (Tc1 ) from sleeping
+on a condition variable to the ready queue; Tc1 is now able to run (but
+not yet running). The producer then continues until realizing the buffer
+is full, at which point it sleeps (p6, p1–p3).
+Here is where the problem occurs: another consumer (Tc2 ) sneaks in
+and consumes the one existing value in the buffer (c1, c2, c4, c5, c6, skipping the wait at c3 because the buffer is full). Now assume Tc1 runs; just
+before returning from the wait, it re-acquires the lock and then returns. It
+then calls get() (c4), but there are no buffers to consume! An assertion
+triggers, and the code has not functioned as desired. Clearly, we should
+have somehow prevented Tc1 from trying to consume because Tc2 snuck
+in and consumed the one value in the buffer that had been produced. Figure 30.9 shows the action each thread takes, as well as its scheduler state
+(Ready, Running, or Sleeping) over time.
+The problem arises for a simple reason: after the producer woke Tc1 ,
+but before Tc1 ever ran, the state of the bounded buffer changed (thanks to
+Tc2 ). Signaling a thread only wakes them up; it is thus a hint that the state
+of the world has changed (in this case, that a value has been placed in the
+buffer), but there is no guarantee that when the woken thread runs, the
+state will still be as desired. This interpretation of what a signal means
+is often referred to as Mesa semantics, after the first research that built
+a condition variable in such a manner [LR80]; the contrast, referred to as
+
+© 2008–20, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+10
+1
+2
+3
+
+C ONDITION VARIABLES
+
+int loops;
+cond_t cond;
+mutex_t mutex;
+
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+
+void *producer(void *arg) {
+int i;
+for (i = 0; i < loops; i++) {
+Pthread_mutex_lock(&mutex);
+while (count == 1)
+Pthread_cond_wait(&cond, &mutex);
+put(i);
+Pthread_cond_signal(&cond);
+Pthread_mutex_unlock(&mutex);
+}
+}
+
+//
+//
+//
+//
+//
+//
+
+p1
+p2
+p3
+p4
+p5
+p6
+
+//
+//
+//
+//
+//
+//
+
+c1
+c2
+c3
+c4
+c5
+c6
+
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+
+void *consumer(void *arg) {
+int i;
+for (i = 0; i < loops; i++) {
+Pthread_mutex_lock(&mutex);
+while (count == 0)
+Pthread_cond_wait(&cond, &mutex);
+int tmp = get();
+Pthread_cond_signal(&cond);
+Pthread_mutex_unlock(&mutex);
+printf("%d\n", tmp);
+}
+}
+
+Figure 30.10: Producer/Consumer: Single CV And While
+Hoare semantics, is harder to build but provides a stronger guarantee
+that the woken thread will run immediately upon being woken [H74].
+Virtually every system ever built employs Mesa semantics.
+
+Better, But Still Broken: While, Not If
+Fortunately, this fix is easy (Figure 30.10): change the if to a while.
+Think about why this works; now consumer Tc1 wakes up and (with the
+lock held) immediately re-checks the state of the shared variable (c2). If
+the buffer is empty at that point, the consumer simply goes back to sleep
+(c3). The corollary if is also changed to a while in the producer (p2).
+Thanks to Mesa semantics, a simple rule to remember with condition
+variables is to always use while loops. Sometimes you don’t have to recheck the condition, but it is always safe to do so; just do it and be happy.
+However, this code still has a bug, the second of two problems mentioned above. Can you see it? It has something to do with the fact that
+there is only one condition variable. Try to figure out what the problem
+is, before reading ahead. DO IT! (pause for you to think, or close your eyes...)
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+Tc1
+
+State
+
+c1
+c2
+c3
+
+Run
+Run
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Ready
+Ready
+Ready
+Ready
+Ready
+Run
+Run
+Run
+Run
+Run
+Run
+Sleep
+Sleep
+Sleep
+
+c2
+c4
+c5
+c6
+c1
+c2
+c3
+
+Tc2
+
+c1
+c2
+c3
+
+c2
+c3
+
+11
+
+State
+Ready
+Ready
+Ready
+Run
+Run
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Ready
+Ready
+Ready
+Ready
+Ready
+Run
+Sleep
+
+Tp
+
+p1
+p2
+p4
+p5
+p6
+p1
+p2
+p3
+
+State
+
+Count
+
+C ONDITION VARIABLES
+
+Ready
+Ready
+Ready
+Ready
+Ready
+Ready
+Run
+Run
+Run
+Run
+Run
+Run
+Run
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+Sleep
+
+0
+0
+0
+0
+0
+0
+0
+0
+1
+1
+1
+1
+1
+1
+1
+0
+0
+0
+0
+0
+0
+0
+0
+
+Comment
+
+Nothing to get
+Nothing to get
+Buffer now full
+Tc1 awoken
+
+Must sleep (full)
+Recheck condition
+Tc1 grabs data
+Oops! Woke Tc2
+
+Nothing to get
+Everyone asleep...
+
+Figure 30.11: Thread Trace: Broken Solution (v2)
+Let’s confirm you figured it out correctly, or perhaps let’s confirm that
+you are now awake and reading this part of the book. The problem occurs when two consumers run first (Tc1 and Tc2 ) and both go to sleep (c3).
+Then, the producer runs, puts a value in the buffer, and wakes one of the
+consumers (say Tc1 ). The producer then loops back (releasing and reacquiring the lock along the way) and tries to put more data in the buffer;
+because the buffer is full, the producer instead waits on the condition
+(thus sleeping). Now, one consumer is ready to run (Tc1 ), and two threads
+are sleeping on a condition (Tc2 and Tp ). We are about to cause a problem:
+things are getting exciting!
+The consumer Tc1 then wakes by returning from wait() (c3), re-checks
+the condition (c2), and finding the buffer full, consumes the value (c4).
+This consumer then, critically, signals on the condition (c5), waking only
+one thread that is sleeping. However, which thread should it wake?
+Because the consumer has emptied the buffer, it clearly should wake
+the producer. However, if it wakes the consumer Tc2 (which is definitely
+possible, depending on how the wait queue is managed), we have a problem. Specifically, the consumer Tc2 will wake up and find the buffer
+empty (c2), and go back to sleep (c3). The producer Tp , which has a value
+
+© 2008–20, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+12
+1
+2
+
+C ONDITION VARIABLES
+
+cond_t empty, fill;
+mutex_t mutex;
+
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+
+void *producer(void *arg) {
+int i;
+for (i = 0; i < loops; i++) {
+Pthread_mutex_lock(&mutex);
+while (count == 1)
+Pthread_cond_wait(&empty, &mutex);
+put(i);
+Pthread_cond_signal(&fill);
+Pthread_mutex_unlock(&mutex);
+}
+}
+
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+
+void *consumer(void *arg) {
+int i;
+for (i = 0; i < loops; i++) {
+Pthread_mutex_lock(&mutex);
+while (count == 0)
+Pthread_cond_wait(&fill, &mutex);
+int tmp = get();
+Pthread_cond_signal(&empty);
+Pthread_mutex_unlock(&mutex);
+printf("%d\n", tmp);
+}
+}
+Figure 30.12: Producer/Consumer: Two CVs And While
+to put into the buffer, is left sleeping. The other consumer thread, Tc1 ,
+also goes back to sleep. All three threads are left sleeping, a clear bug; see
+Figure 30.11 for the brutal step-by-step of this terrible calamity.
+Signaling is clearly needed, but must be more directed. A consumer
+should not wake other consumers, only producers, and vice-versa.
+
+The Single Buffer Producer/Consumer Solution
+The solution here is once again a small one: use two condition variables,
+instead of one, in order to properly signal which type of thread should
+wake up when the state of the system changes. Figure 30.12 shows the
+resulting code.
+In the code, producer threads wait on the condition empty, and signals fill. Conversely, consumer threads wait on fill and signal empty. By
+doing so, the second problem above is avoided by design: a consumer
+can never accidentally wake a consumer, and a producer can never accidentally wake a producer.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+C ONDITION VARIABLES
+1
+2
+3
+4
+
+int
+int
+int
+int
+
+13
+
+buffer[MAX];
+fill_ptr = 0;
+use_ptr = 0;
+count
+= 0;
+
+5
+6
+7
+8
+9
+10
+
+void put(int value) {
+buffer[fill_ptr] = value;
+fill_ptr = (fill_ptr + 1) % MAX;
+count++;
+}
+
+11
+12
+13
+14
+15
+16
+17
+
+1
+2
+
+int get() {
+int tmp = buffer[use_ptr];
+use_ptr = (use_ptr + 1) % MAX;
+count--;
+return tmp;
+}
+Figure 30.13: The Correct Put And Get Routines
+cond_t empty, fill;
+mutex_t mutex;
+
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+
+void *producer(void *arg) {
+int i;
+for (i = 0; i < loops; i++) {
+Pthread_mutex_lock(&mutex);
+// p1
+while (count == MAX)
+// p2
+Pthread_cond_wait(&empty, &mutex); // p3
+put(i);
+// p4
+Pthread_cond_signal(&fill);
+// p5
+Pthread_mutex_unlock(&mutex);
+// p6
+}
+}
+
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+
+void *consumer(void *arg) {
+int i;
+for (i = 0; i < loops; i++) {
+Pthread_mutex_lock(&mutex);
+// c1
+while (count == 0)
+// c2
+Pthread_cond_wait(&fill, &mutex); // c3
+int tmp = get();
+// c4
+Pthread_cond_signal(&empty);
+// c5
+Pthread_mutex_unlock(&mutex);
+// c6
+printf("%d\n", tmp);
+}
+}
+Figure 30.14: The Correct Producer/Consumer Synchronization
+
+© 2008–20, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+14
+
+C ONDITION VARIABLES
+
+T IP : U SE W HILE (N OT I F ) F OR C ONDITIONS
+When checking for a condition in a multi-threaded program, using a
+while loop is always correct; using an if statement only might be, depending on the semantics of signaling. Thus, always use while and your
+code will behave as expected.
+Using while loops around conditional checks also handles the case where
+spurious wakeups occur. In some thread packages, due to details of the
+implementation, it is possible that two threads get woken up though just
+a single signal has taken place [L11]. Spurious wakeups are further reason
+to re-check the condition a thread is waiting on.
+
+The Correct Producer/Consumer Solution
+We now have a working producer/consumer solution, albeit not a fully
+general one. The last change we make is to enable more concurrency and
+efficiency; specifically, we add more buffer slots, so that multiple values
+can be produced before sleeping, and similarly multiple values can be
+consumed before sleeping. With just a single producer and consumer, this
+approach is more efficient as it reduces context switches; with multiple
+producers or consumers (or both), it even allows concurrent producing
+or consuming to take place, thus increasing concurrency. Fortunately, it
+is a small change from our current solution.
+The first change for this correct solution is within the buffer structure
+itself and the corresponding put() and get() (Figure 30.13). We also
+slightly change the conditions that producers and consumers check in order to determine whether to sleep or not. We also show the correct waiting and signaling logic (Figure 30.14). A producer only sleeps if all buffers
+are currently filled (p2); similarly, a consumer only sleeps if all buffers are
+currently empty (c2). And thus we solve the producer/consumer problem; time to sit back and drink a cold one.
+
+30.3
+
+Covering Conditions
+We’ll now look at one more example of how condition variables can
+be used. This code study is drawn from Lampson and Redell’s paper on
+Pilot [LR80], the same group who first implemented the Mesa semantics
+described above (the language they used was Mesa, hence the name).
+The problem they ran into is best shown via simple example, in this
+case in a simple multi-threaded memory allocation library. Figure 30.15
+shows a code snippet which demonstrates the issue.
+As you might see in the code, when a thread calls into the memory
+allocation code, it might have to wait in order for more memory to become free. Conversely, when a thread frees memory, it signals that more
+memory is free. However, our code above has a problem: which waiting
+thread (there can be more than one) should be woken up?
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+C ONDITION VARIABLES
+1
+2
+
+15
+
+// how many bytes of the heap are free?
+int bytesLeft = MAX_HEAP_SIZE;
+
+3
+4
+5
+6
+
+// need lock and condition too
+cond_t c;
+mutex_t m;
+
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+
+void *
+allocate(int size) {
+Pthread_mutex_lock(&m);
+while (bytesLeft < size)
+Pthread_cond_wait(&c, &m);
+void *ptr = ...; // get mem from heap
+bytesLeft -= size;
+Pthread_mutex_unlock(&m);
+return ptr;
+}
+
+18
+19
+20
+21
+22
+23
+24
+
+void free(void *ptr, int size) {
+Pthread_mutex_lock(&m);
+bytesLeft += size;
+Pthread_cond_signal(&c); // whom to signal??
+Pthread_mutex_unlock(&m);
+}
+Figure 30.15: Covering Conditions: An Example
+Consider the following scenario. Assume there are zero bytes free;
+thread Ta calls allocate(100), followed by thread Tb which asks for
+less memory by calling allocate(10). Both Ta and Tb thus wait on the
+condition and go to sleep; there aren’t enough free bytes to satisfy either
+of these requests.
+At that point, assume a third thread, Tc , calls free(50). Unfortunately, when it calls signal to wake a waiting thread, it might not wake
+the correct waiting thread, Tb , which is waiting for only 10 bytes to be
+freed; Ta should remain waiting, as not enough memory is yet free. Thus,
+the code in the figure does not work, as the thread waking other threads
+does not know which thread (or threads) to wake up.
+The solution suggested by Lampson and Redell is straightforward: replace the pthread cond signal() call in the code above with a call to
+pthread cond broadcast(), which wakes up all waiting threads. By
+doing so, we guarantee that any threads that should be woken are. The
+downside, of course, can be a negative performance impact, as we might
+needlessly wake up many other waiting threads that shouldn’t (yet) be
+awake. Those threads will simply wake up, re-check the condition, and
+then go immediately back to sleep.
+Lampson and Redell call such a condition a covering condition, as it
+covers all the cases where a thread needs to wake up (conservatively);
+the cost, as we’ve discussed, is that too many threads might be woken.
+
+© 2008–20, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+16
+
+C ONDITION VARIABLES
+
+The astute reader might also have noticed we could have used this approach earlier (see the producer/consumer problem with only a single
+condition variable). However, in that case, a better solution was available to us, and thus we used it. In general, if you find that your program
+only works when you change your signals to broadcasts (but you don’t
+think it should need to), you probably have a bug; fix it! But in cases like
+the memory allocator above, broadcast may be the most straightforward
+solution available.
+
+30.4
+
+Summary
+We have seen the introduction of another important synchronization
+primitive beyond locks: condition variables. By allowing threads to sleep
+when some program state is not as desired, CVs enable us to neatly solve
+a number of important synchronization problems, including the famous
+(and still important) producer/consumer problem, as well as covering
+conditions. A more dramatic concluding sentence would go here, such as
+“He loved Big Brother” [O49].
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+C ONDITION VARIABLES
+
+17
+
+References
+[D68] “Cooperating sequential processes” by Edsger W. Dijkstra. 1968. Available online here:
+http://www.cs.utexas.edu/users/EWD/ewd01xx/EWD123.PDF. Another classic from Dijkstra; reading his early works on concurrency will teach you much of what you need to know.
+[D72] “Information Streams Sharing a Finite Buffer” by E.W. Dijkstra. Information Processing
+Letters 1: 179–180, 1972. http://www.cs.utexas.edu/users/EWD/ewd03xx/EWD329.PDF
+The famous paper that introduced the producer/consumer problem.
+[D01] “My recollections of operating system design” by E.W. Dijkstra. April, 2001. Available: http://www.cs.utexas.edu/users/EWD/ewd13xx/EWD1303.PDF. A fascinating
+read for those of you interested in how the pioneers of our field came up with some very basic and
+fundamental concepts, including ideas like “interrupts” and even “a stack”!
+[H74] “Monitors: An Operating System Structuring Concept” by C.A.R. Hoare. Communications of the ACM, 17:10, pages 549–557, October 1974. Hoare did a fair amount of theoretical work
+in concurrency. However, he is still probably most known for his work on Quicksort, the coolest sorting
+algorithm in the world, at least according to these authors.
+[L11] “Pthread cond signal Man Page” by Mysterious author. March, 2011. Available online:
+http://linux.die.net/man/3/pthread cond signal. The Linux man page shows a nice
+simple example of why a thread might get a spurious wakeup, due to race conditions within the signal/wakeup code.
+[LR80] “Experience with Processes and Monitors in Mesa” by B.W. Lampson, D.R. Redell.
+Communications of the ACM. 23:2, pages 105-117, February 1980. A classic paper about how
+to actually implement signaling and condition variables in a real system, leading to the term “Mesa”
+semantics for what it means to be woken up; the older semantics, developed by Tony Hoare [H74], then
+became known as “Hoare” semantics, which is a bit unfortunate of a name.
+[O49] “1984” by George Orwell. Secker and Warburg, 1949. A little heavy-handed, but of course
+a must read. That said, we kind of gave away the ending by quoting the last sentence. Sorry! And if
+the government is reading this, let us just say that we think that the government is “double plus good”.
+Hear that, our pals at the NSA?
+
+© 2008–20, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+18
+
+C ONDITION VARIABLES
+
+Homework (Code)
+This homework lets you explore some real code that uses locks and
+condition variables to implement various forms of the producer/consumer
+queue discussed in the chapter. You’ll look at the real code, run it in
+various configurations, and use it to learn about what works and what
+doesn’t, as well as other intricacies. Read the README for details.
+
+Questions
+1. Our first question focuses on main-two-cvs-while.c (the working solution). First, study the code. Do you think you have an understanding of what should happen when you run the program?
+2. Run with one producer and one consumer, and have the producer
+produce a few values. Start with a buffer (size 1), and then increase
+it. How does the behavior of the code change with larger buffers?
+(or does it?) What would you predict num full to be with different
+buffer sizes (e.g., -m 10) and different numbers of produced items
+(e.g., -l 100), when you change the consumer sleep string from
+default (no sleep) to -C 0,0,0,0,0,0,1?
+3. If possible, run the code on different systems (e.g., a Mac and Linux).
+Do you see different behavior across these systems?
+4. Let’s look at some timings. How long do you think the following execution, with one producer, three consumers, a single-entry
+shared buffer, and each consumer pausing at point c3 for a second, will take? ./main-two-cvs-while -p 1 -c 3 -m 1 -C
+0,0,0,1,0,0,0:0,0,0,1,0,0,0:0,0,0,1,0,0,0 -l 10 -v
+-t
+5. Now change the size of the shared buffer to 3 (-m 3). Will this make
+any difference in the total time?
+6. Now change the location of the sleep to c6 (this models a consumer taking something off the queue and then doing something
+with it), again using a single-entry buffer. What time do you predict in this case? ./main-two-cvs-while -p 1 -c 3 -m 1
+-C 0,0,0,0,0,0,1:0,0,0,0,0,0,1:0,0,0,0,0,0,1 -l 10
+-v -t
+7. Finally, change the buffer size to 3 again (-m 3). What time do you
+predict now?
+8. Now let’s look at main-one-cv-while.c. Can you configure
+a sleep string, assuming a single producer, one consumer, and a
+buffer of size 1, to cause a problem with this code?
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+C ONDITION VARIABLES
+
+19
+
+9. Now change the number of consumers to two. Can you construct
+sleep strings for the producer and the consumers so as to cause a
+problem in the code?
+10. Now examine main-two-cvs-if.c. Can you cause a problem to
+happen in this code? Again consider the case where there is only
+one consumer, and then the case where there is more than one.
+11. Finally, examine main-two-cvs-while-extra-unlock.c. What
+problem arises when you release the lock before doing a put or a
+get? Can you reliably cause such a problem to happen, given the
+sleep strings? What bad thing can happen?
+
+© 2008–20, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+

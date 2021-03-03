@@ -1,0 +1,1042 @@
+2
+Introduction to Operating Systems
+
+If you are taking an undergraduate operating systems course, you should
+already have some idea of what a computer program does when it runs.
+If not, this book (and the corresponding course) is going to be difficult
+— so you should probably stop reading this book, or run to the nearest bookstore and quickly consume the necessary background material
+before continuing (both Patt & Patel [PP03] and Bryant & O’Hallaron
+[BOH10] are pretty great books).
+So what happens when a program runs?
+Well, a running program does one very simple thing: it executes instructions. Many millions (and these days, even billions) of times every second, the processor fetches an instruction from memory, decodes
+it (i.e., figures out which instruction this is), and executes it (i.e., it does
+the thing that it is supposed to do, like add two numbers together, access
+memory, check a condition, jump to a function, and so forth). After it is
+done with this instruction, the processor moves on to the next instruction,
+and so on, and so on, until the program finally completes1 .
+Thus, we have just described the basics of the Von Neumann model of
+computing2 . Sounds simple, right? But in this class, we will be learning
+that while a program runs, a lot of other wild things are going on with
+the primary goal of making the system easy to use.
+There is a body of software, in fact, that is responsible for making it
+easy to run programs (even allowing you to seemingly run many at the
+same time), allowing programs to share memory, enabling programs to
+interact with devices, and other fun stuff like that. That body of software
+1
+Of course, modern processors do many bizarre and frightening things underneath the
+hood to make programs run faster, e.g., executing multiple instructions at once, and even issuing and completing them out of order! But that is not our concern here; we are just concerned
+with the simple model most programs assume: that instructions seemingly execute one at a
+time, in an orderly and sequential fashion.
+2
+Von Neumann was one of the early pioneers of computing systems. He also did pioneering work on game theory and atomic bombs, and played in the NBA for six years. OK, one of
+those things isn’t true.
+
+1
+
+2
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+T HE C RUX OF THE P ROBLEM :
+H OW T O V IRTUALIZE R ESOURCES
+One central question we will answer in this book is quite simple: how
+does the operating system virtualize resources? This is the crux of our
+problem. Why the OS does this is not the main question, as the answer
+should be obvious: it makes the system easier to use. Thus, we focus on
+the how: what mechanisms and policies are implemented by the OS to
+attain virtualization? How does the OS do so efficiently? What hardware
+support is needed?
+We will use the “crux of the problem”, in shaded boxes such as this one,
+as a way to call out specific problems we are trying to solve in building
+an operating system. Thus, within a note on a particular topic, you may
+find one or more cruces (yes, this is the proper plural) which highlight the
+problem. The details within the chapter, of course, present the solution,
+or at least the basic parameters of a solution.
+
+is called the operating system (OS)3 , as it is in charge of making sure the
+system operates correctly and efficiently in an easy-to-use manner.
+The primary way the OS does this is through a general technique that
+we call virtualization. That is, the OS takes a physical resource (such as
+the processor, or memory, or a disk) and transforms it into a more general, powerful, and easy-to-use virtual form of itself. Thus, we sometimes
+refer to the operating system as a virtual machine.
+Of course, in order to allow users to tell the OS what to do and thus
+make use of the features of the virtual machine (such as running a program, or allocating memory, or accessing a file), the OS also provides
+some interfaces (APIs) that you can call. A typical OS, in fact, exports
+a few hundred system calls that are available to applications. Because
+the OS provides these calls to run programs, access memory and devices,
+and other related actions, we also sometimes say that the OS provides a
+standard library to applications.
+Finally, because virtualization allows many programs to run (thus sharing the CPU), and many programs to concurrently access their own instructions and data (thus sharing memory), and many programs to access
+devices (thus sharing disks and so forth), the OS is sometimes known as
+a resource manager. Each of the CPU, memory, and disk is a resource
+of the system; it is thus the operating system’s role to manage those resources, doing so efficiently or fairly or indeed with many other possible
+goals in mind. To understand the role of the OS a little bit better, let’s take
+a look at some examples.
+3
+Another early name for the OS was the supervisor or even the master control program.
+Apparently, the latter sounded a little overzealous (see the movie Tron for details) and thus,
+thankfully, “operating system” caught on instead.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTRODUCTION TO O PERATING S YSTEMS
+1
+2
+3
+4
+5
+
+#include
+#include
+#include
+#include
+#include
+
+3
+
+<stdio.h>
+<stdlib.h>
+<sys/time.h>
+<assert.h>
+"common.h"
+
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+
+int
+main(int argc, char *argv[])
+{
+if (argc != 2) {
+fprintf(stderr, "usage: cpu <string>\n");
+exit(1);
+}
+char *str = argv[1];
+while (1) {
+Spin(1);
+printf("%s\n", str);
+}
+return 0;
+}
+Figure 2.1: Simple Example: Code That Loops And Prints (cpu.c)
+
+2.1 Virtualizing The CPU
+Figure 2.1 depicts our first program. It doesn’t do much. In fact, all
+it does is call Spin(), a function that repeatedly checks the time and
+returns once it has run for a second. Then, it prints out the string that the
+user passed in on the command line, and repeats, forever.
+Let’s say we save this file as cpu.c and decide to compile and run it
+on a system with a single processor (or CPU as we will sometimes call it).
+Here is what we will see:
+prompt> gcc -o cpu cpu.c -Wall
+prompt> ./cpu "A"
+A
+A
+A
+A
+ˆC
+prompt>
+Not too interesting of a run — the system begins running the program,
+which repeatedly checks the time until a second has elapsed. Once a second has passed, the code prints the input string passed in by the user (in
+this example, the letter “A”), and continues. Note the program will run
+forever; by pressing “Control-c” (which on U NIX-based systems will terminate the program running in the foreground) we can halt the program.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+4
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+prompt> ./cpu A & ./cpu B & ./cpu C & ./cpu D &
+[1] 7353
+[2] 7354
+[3] 7355
+[4] 7356
+A
+B
+D
+C
+A
+B
+D
+C
+A
+...
+Figure 2.2: Running Many Programs At Once
+Now, let’s do the same thing, but this time, let’s run many different instances of this same program. Figure 2.2 shows the results of this slightly
+more complicated example.
+Well, now things are getting a little more interesting. Even though we
+have only one processor, somehow all four of these programs seem to be
+running at the same time! How does this magic happen?4
+It turns out that the operating system, with some help from the hardware, is in charge of this illusion, i.e., the illusion that the system has
+a very large number of virtual CPUs. Turning a single CPU (or a small
+set of them) into a seemingly infinite number of CPUs and thus allowing
+many programs to seemingly run at once is what we call virtualizing the
+CPU, the focus of the first major part of this book.
+Of course, to run programs, and stop them, and otherwise tell the OS
+which programs to run, there need to be some interfaces (APIs) that you
+can use to communicate your desires to the OS. We’ll talk about these
+APIs throughout this book; indeed, they are the major way in which most
+users interact with operating systems.
+You might also notice that the ability to run multiple programs at once
+raises all sorts of new questions. For example, if two programs want to
+run at a particular time, which should run? This question is answered by
+a policy of the OS; policies are used in many different places within an
+OS to answer these types of questions, and thus we will study them as
+we learn about the basic mechanisms that operating systems implement
+(such as the ability to run multiple programs at once). Hence the role of
+the OS as a resource manager.
+4
+Note how we ran four processes at the same time, by using the & symbol. Doing so runs a
+job in the background in the zsh shell, which means that the user is able to immediately issue
+their next command, which in this case is another program to run. If you’re using a different
+shell (e.g., tcsh), it works slightly differently; read documentation online for details.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTRODUCTION TO O PERATING S YSTEMS
+1
+2
+3
+4
+
+#include
+#include
+#include
+#include
+
+5
+
+<unistd.h>
+<stdio.h>
+<stdlib.h>
+"common.h"
+
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+
+int
+main(int argc, char *argv[])
+{
+int *p = malloc(sizeof(int));
+assert(p != NULL);
+printf("(%d) address pointed to by p: %p\n",
+getpid(), p);
+*p = 0;
+while (1) {
+Spin(1);
+*p = *p + 1;
+printf("(%d) p: %d\n", getpid(), *p);
+}
+return 0;
+}
+Figure 2.3: A Program That Accesses Memory (mem.c)
+
+// a1
+// a2
+// a3
+
+// a4
+
+2.2 Virtualizing Memory
+Now let’s consider memory. The model of physical memory presented by modern machines is very simple. Memory is just an array of
+bytes; to read memory, one must specify an address to be able to access
+the data stored there; to write (or update) memory, one must also specify
+the data to be written to the given address.
+Memory is accessed all the time when a program is running. A program keeps all of its data structures in memory, and accesses them through
+various instructions, like loads and stores or other explicit instructions
+that access memory in doing their work. Don’t forget that each instruction of the program is in memory too; thus memory is accessed on each
+instruction fetch.
+Let’s take a look at a program (in Figure 2.3) that allocates some memory by calling malloc(). The output of this program can be found here:
+prompt> ./mem
+(2134) address pointed to by p: 0x200000
+(2134) p: 1
+(2134) p: 2
+(2134) p: 3
+(2134) p: 4
+(2134) p: 5
+ˆC
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+6
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+prompt> ./mem &; ./mem &
+[1] 24113
+[2] 24114
+(24113) address pointed to by p: 0x200000
+(24114) address pointed to by p: 0x200000
+(24113) p: 1
+(24114) p: 1
+(24114) p: 2
+(24113) p: 2
+(24113) p: 3
+(24114) p: 3
+(24113) p: 4
+(24114) p: 4
+...
+Figure 2.4: Running The Memory Program Multiple Times
+The program does a couple of things. First, it allocates some memory
+(line a1). Then, it prints out the address of the memory (a2), and then
+puts the number zero into the first slot of the newly allocated memory
+(a3). Finally, it loops, delaying for a second and incrementing the value
+stored at the address held in p. With every print statement, it also prints
+out what is called the process identifier (the PID) of the running program.
+This PID is unique per running process.
+Again, this first result is not too interesting. The newly allocated memory is at address 0x200000. As the program runs, it slowly updates the
+value and prints out the result.
+Now, we again run multiple instances of this same program to see
+what happens (Figure 2.4). We see from the example that each running
+program has allocated memory at the same address (0x200000), and yet
+each seems to be updating the value at 0x200000 independently! It is as
+if each running program has its own private memory, instead of sharing
+the same physical memory with other running programs5 .
+Indeed, that is exactly what is happening here as the OS is virtualizing memory. Each process accesses its own private virtual address space
+(sometimes just called its address space), which the OS somehow maps
+onto the physical memory of the machine. A memory reference within
+one running program does not affect the address space of other processes
+(or the OS itself); as far as the running program is concerned, it has physical memory all to itself. The reality, however, is that physical memory is
+a shared resource, managed by the operating system. Exactly how all of
+this is accomplished is also the subject of the first part of this book, on the
+topic of virtualization.
+5
+For this example to work, you need to make sure address-space randomization is disabled; randomization, as it turns out, can be a good defense against certain kinds of security
+flaws. Read more about it on your own, especially if you want to learn how to break into
+computer systems via stack-smashing attacks. Not that we would recommend such a thing...
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+7
+
+2.3 Concurrency
+1
+2
+3
+
+#include <stdio.h>
+#include <stdlib.h>
+#include "common.h"
+
+4
+5
+6
+
+volatile int counter = 0;
+int loops;
+
+7
+8
+9
+10
+11
+12
+13
+14
+
+void *worker(void *arg) {
+int i;
+for (i = 0; i < loops; i++) {
+counter++;
+}
+return NULL;
+}
+
+15
+16
+17
+18
+19
+20
+21
+22
+23
+
+int main(int argc, char *argv[]) {
+if (argc != 2) {
+fprintf(stderr, "usage: threads <value>\n");
+exit(1);
+}
+loops = atoi(argv[1]);
+pthread_t p1, p2;
+printf("Initial value : %d\n", counter);
+
+24
+
+Pthread_create(&p1, NULL, worker, NULL);
+Pthread_create(&p2, NULL, worker, NULL);
+Pthread_join(p1, NULL);
+Pthread_join(p2, NULL);
+printf("Final value
+: %d\n", counter);
+return 0;
+
+25
+26
+27
+28
+29
+30
+31
+
+}
+Figure 2.5: A Multi-threaded Program (threads.c)
+Another main theme of this book is concurrency. We use this conceptual term to refer to a host of problems that arise, and must be addressed,
+when working on many things at once (i.e., concurrently) in the same
+program. The problems of concurrency arose first within the operating
+system itself; as you can see in the examples above on virtualization, the
+OS is juggling many things at once, first running one process, then another, and so forth. As it turns out, doing so leads to some deep and
+interesting problems.
+Unfortunately, the problems of concurrency are no longer limited just
+to the OS itself. Indeed, modern multi-threaded programs exhibit the
+same problems. Let us demonstrate with an example of a multi-threaded
+program (Figure 2.5).
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+8
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+Although you might not understand this example fully at the moment
+(and we’ll learn a lot more about it in later chapters, in the section of the
+book on concurrency), the basic idea is simple. The main program creates
+two threads using Pthread create()6 . You can think of a thread as a
+function running within the same memory space as other functions, with
+more than one of them active at a time. In this example, each thread starts
+running in a routine called worker(), in which it simply increments a
+counter in a loop for loops number of times.
+Below is a transcript of what happens when we run this program with
+the input value for the variable loops set to 1000. The value of loops
+determines how many times each of the two workers will increment the
+shared counter in a loop. When the program is run with the value of
+loops set to 1000, what do you expect the final value of counter to be?
+prompt> gcc -o thread thread.c -Wall -pthread
+prompt> ./thread 1000
+Initial value : 0
+Final value
+: 2000
+As you probably guessed, when the two threads are finished, the final
+value of the counter is 2000, as each thread incremented the counter 1000
+times. Indeed, when the input value of loops is set to N , we would
+expect the final output of the program to be 2N . But life is not so simple,
+as it turns out. Let’s run the same program, but with higher values for
+loops, and see what happens:
+prompt> ./thread 100000
+Initial value : 0
+Final value
+: 143012
+prompt> ./thread 100000
+Initial value : 0
+Final value
+: 137298
+
+// huh??
+// what the??
+
+In this run, when we gave an input value of 100,000, instead of getting
+a final value of 200,000, we instead first get 143,012. Then, when we run
+the program a second time, we not only again get the wrong value, but
+also a different value than the last time. In fact, if you run the program
+over and over with high values of loops, you may find that sometimes
+you even get the right answer! So why is this happening?
+As it turns out, the reason for these odd and unusual outcomes relate
+to how instructions are executed, which is one at a time. Unfortunately, a
+key part of the program above, where the shared counter is incremented,
+6
+The actual call should be to lower-case pthread create(); the upper-case version is
+our own wrapper that calls pthread create() and makes sure that the return code indicates
+that the call succeeded. See the code for details.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+9
+
+T HE C RUX OF THE P ROBLEM :
+H OW T O B UILD C ORRECT C ONCURRENT P ROGRAMS
+When there are many concurrently executing threads within the same
+memory space, how can we build a correctly working program? What
+primitives are needed from the OS? What mechanisms should be provided by the hardware? How can we use them to solve the problems of
+concurrency?
+
+takes three instructions: one to load the value of the counter from memory into a register, one to increment it, and one to store it back into memory. Because these three instructions do not execute atomically (all at
+once), strange things can happen. It is this problem of concurrency that
+we will address in great detail in the second part of this book.
+
+2.4 Persistence
+The third major theme of the course is persistence. In system memory,
+data can be easily lost, as devices such as DRAM store values in a volatile
+manner; when power goes away or the system crashes, any data in memory is lost. Thus, we need hardware and software to be able to store data
+persistently; such storage is thus critical to any system as users care a
+great deal about their data.
+The hardware comes in the form of some kind of input/output or I/O
+device; in modern systems, a hard drive is a common repository for longlived information, although solid-state drives (SSDs) are making headway in this arena as well.
+The software in the operating system that usually manages the disk is
+called the file system; it is thus responsible for storing any files the user
+creates in a reliable and efficient manner on the disks of the system.
+Unlike the abstractions provided by the OS for the CPU and memory,
+the OS does not create a private, virtualized disk for each application.
+Rather, it is assumed that often times, users will want to share information that is in files. For example, when writing a C program, you might
+first use an editor (e.g., Emacs7 ) to create and edit the C file (emacs -nw
+main.c). Once done, you might use the compiler to turn the source code
+into an executable (e.g., gcc -o main main.c). When you’re finished,
+you might run the new executable (e.g., ./main). Thus, you can see how
+files are shared across different processes. First, Emacs creates a file that
+serves as input to the compiler; the compiler uses that input file to create
+a new executable file (in many steps — take a compiler course for details);
+finally, the new executable is then run. And thus a new program is born!
+7
+You should be using Emacs. If you are using vi, there is probably something wrong with
+you. If you are using something that is not a real code editor, that is even worse.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+10
+1
+2
+3
+4
+5
+
+#include
+#include
+#include
+#include
+#include
+
+I NTRODUCTION TO O PERATING S YSTEMS
+<stdio.h>
+<unistd.h>
+<assert.h>
+<fcntl.h>
+<sys/types.h>
+
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+
+int main(int argc, char *argv[]) {
+int fd = open("/tmp/file", O_WRONLY|O_CREAT|O_TRUNC,
+S_IRWXU);
+assert(fd > -1);
+int rc = write(fd, "hello world\n", 13);
+assert(rc == 13);
+close(fd);
+return 0;
+}
+Figure 2.6: A Program That Does I/O (io.c)
+To understand this better, let’s look at some code. Figure 2.6 presents
+code to create a file (/tmp/file) that contains the string “hello world”.
+To accomplish this task, the program makes three calls into the operating system. The first, a call to open(), opens the file and creates it; the
+second, write(), writes some data to the file; the third, close(), simply closes the file thus indicating the program won’t be writing any more
+data to it. These system calls are routed to the part of the operating system called the file system, which then handles the requests and returns
+some kind of error code to the user.
+You might be wondering what the OS does in order to actually write
+to disk. We would show you but you’d have to promise to close your
+eyes first; it is that unpleasant. The file system has to do a fair bit of work:
+first figuring out where on disk this new data will reside, and then keeping track of it in various structures the file system maintains. Doing so
+requires issuing I/O requests to the underlying storage device, to either
+read existing structures or update (write) them. As anyone who has written a device driver8 knows, getting a device to do something on your
+behalf is an intricate and detailed process. It requires a deep knowledge
+of the low-level device interface and its exact semantics. Fortunately, the
+OS provides a standard and simple way to access devices through its system calls. Thus, the OS is sometimes seen as a standard library.
+Of course, there are many more details in how devices are accessed,
+and how file systems manage data persistently atop said devices. For
+performance reasons, most file systems first delay such writes for a while,
+hoping to batch them into larger groups. To handle the problems of system crashes during writes, most file systems incorporate some kind of
+intricate write protocol, such as journaling or copy-on-write, carefully
+8
+A device driver is some code in the operating system that knows how to deal with a
+specific device. We will talk more about devices and device drivers later.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+11
+
+T HE C RUX OF THE P ROBLEM :
+H OW T O S TORE D ATA P ERSISTENTLY
+The file system is the part of the OS in charge of managing persistent data.
+What techniques are needed to do so correctly? What mechanisms and
+policies are required to do so with high performance? How is reliability
+achieved, in the face of failures in hardware and software?
+
+ordering writes to disk to ensure that if a failure occurs during the write
+sequence, the system can recover to reasonable state afterwards. To make
+different common operations efficient, file systems employ many different data structures and access methods, from simple lists to complex btrees. If all of this doesn’t make sense yet, good! We’ll be talking about
+all of this quite a bit more in the third part of this book on persistence,
+where we’ll discuss devices and I/O in general, and then disks, RAIDs,
+and file systems in great detail.
+
+2.5 Design Goals
+So now you have some idea of what an OS actually does: it takes physical resources, such as a CPU, memory, or disk, and virtualizes them. It
+handles tough and tricky issues related to concurrency. And it stores files
+persistently, thus making them safe over the long-term. Given that we
+want to build such a system, we want to have some goals in mind to help
+focus our design and implementation and make trade-offs as necessary;
+finding the right set of trade-offs is a key to building systems.
+One of the most basic goals is to build up some abstractions in order
+to make the system convenient and easy to use. Abstractions are fundamental to everything we do in computer science. Abstraction makes
+it possible to write a large program by dividing it into small and understandable pieces, to write such a program in a high-level language like
+C9 without thinking about assembly, to write code in assembly without
+thinking about logic gates, and to build a processor out of gates without
+thinking too much about transistors. Abstraction is so fundamental that
+sometimes we forget its importance, but we won’t here; thus, in each section, we’ll discuss some of the major abstractions that have developed
+over time, giving you a way to think about pieces of the OS.
+One goal in designing and implementing an operating system is to
+provide high performance; another way to say this is our goal is to minimize the overheads of the OS. Virtualization and making the system easy
+to use are well worth it, but not at any cost; thus, we must strive to provide virtualization and other OS features without excessive overheads.
+9
+Some of you might object to calling C a high-level language. Remember this is an OS
+course, though, where we’re simply happy not to have to code in assembly all the time!
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+12
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+These overheads arise in a number of forms: extra time (more instructions) and extra space (in memory or on disk). We’ll seek solutions that
+minimize one or the other or both, if possible. Perfection, however, is not
+always attainable, something we will learn to notice and (where appropriate) tolerate.
+Another goal will be to provide protection between applications, as
+well as between the OS and applications. Because we wish to allow
+many programs to run at the same time, we want to make sure that the
+malicious or accidental bad behavior of one does not harm others; we
+certainly don’t want an application to be able to harm the OS itself (as
+that would affect all programs running on the system). Protection is at
+the heart of one of the main principles underlying an operating system,
+which is that of isolation; isolating processes from one another is the key
+to protection and thus underlies much of what an OS must do.
+The operating system must also run non-stop; when it fails, all applications running on the system fail as well. Because of this dependence,
+operating systems often strive to provide a high degree of reliability. As
+operating systems grow evermore complex (sometimes containing millions of lines of code), building a reliable operating system is quite a challenge — and indeed, much of the on-going research in the field (including
+some of our own work [BS+09, SS+10]) focuses on this exact problem.
+Other goals make sense: energy-efficiency is important in our increasingly green world; security (an extension of protection, really) against
+malicious applications is critical, especially in these highly-networked
+times; mobility is increasingly important as OSes are run on smaller and
+smaller devices. Depending on how the system is used, the OS will have
+different goals and thus likely be implemented in at least slightly different ways. However, as we will see, many of the principles we will present
+on how to build an OS are useful on a range of different devices.
+
+2.6
+
+Some History
+Before closing this introduction, let us present a brief history of how
+operating systems developed. Like any system built by humans, good
+ideas accumulated in operating systems over time, as engineers learned
+what was important in their design. Here, we discuss a few major developments. For a richer treatment, see Brinch Hansen’s excellent history of
+operating systems [BH00].
+
+Early Operating Systems: Just Libraries
+In the beginning, the operating system didn’t do too much. Basically,
+it was just a set of libraries of commonly-used functions; for example,
+instead of having each programmer of the system write low-level I/O
+handling code, the “OS” would provide such APIs, and thus make life
+easier for the developer.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+13
+
+Usually, on these old mainframe systems, one program ran at a time,
+as controlled by a human operator. Much of what you think a modern
+OS would do (e.g., deciding what order to run jobs in) was performed by
+this operator. If you were a smart developer, you would be nice to this
+operator, so that they might move your job to the front of the queue.
+This mode of computing was known as batch processing, as a number
+of jobs were set up and then run in a “batch” by the operator. Computers,
+as of that point, were not used in an interactive manner, because of cost:
+it was simply too expensive to let a user sit in front of the computer and
+use it, as most of the time it would just sit idle then, costing the facility
+hundreds of thousands of dollars per hour [BH00].
+
+Beyond Libraries: Protection
+In moving beyond being a simple library of commonly-used services, operating systems took on a more central role in managing machines. One
+important aspect of this was the realization that code run on behalf of the
+OS was special; it had control of devices and thus should be treated differently than normal application code. Why is this? Well, imagine if you
+allowed any application to read from anywhere on the disk; the notion of
+privacy goes out the window, as any program could read any file. Thus,
+implementing a file system (to manage your files) as a library makes little
+sense. Instead, something else was needed.
+Thus, the idea of a system call was invented, pioneered by the Atlas
+computing system [K+61,L78]. Instead of providing OS routines as a library (where you just make a procedure call to access them), the idea here
+was to add a special pair of hardware instructions and hardware state to
+make the transition into the OS a more formal, controlled process.
+The key difference between a system call and a procedure call is that
+a system call transfers control (i.e., jumps) into the OS while simultaneously raising the hardware privilege level. User applications run in what
+is referred to as user mode which means the hardware restricts what applications can do; for example, an application running in user mode can’t
+typically initiate an I/O request to the disk, access any physical memory
+page, or send a packet on the network. When a system call is initiated
+(usually through a special hardware instruction called a trap), the hardware transfers control to a pre-specified trap handler (that the OS set up
+previously) and simultaneously raises the privilege level to kernel mode.
+In kernel mode, the OS has full access to the hardware of the system and
+thus can do things like initiate an I/O request or make more memory
+available to a program. When the OS is done servicing the request, it
+passes control back to the user via a special return-from-trap instruction,
+which reverts to user mode while simultaneously passing control back to
+where the application left off.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+14
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+The Era of Multiprogramming
+Where operating systems really took off was in the era of computing beyond the mainframe, that of the minicomputer. Classic machines like
+the PDP family from Digital Equipment made computers hugely more
+affordable; thus, instead of having one mainframe per large organization,
+now a smaller collection of people within an organization could likely
+have their own computer. Not surprisingly, one of the major impacts of
+this drop in cost was an increase in developer activity; more smart people
+got their hands on computers and thus made computer systems do more
+interesting and beautiful things.
+In particular, multiprogramming became commonplace due to the desire to make better use of machine resources. Instead of just running one
+job at a time, the OS would load a number of jobs into memory and switch
+rapidly between them, thus improving CPU utilization. This switching
+was particularly important because I/O devices were slow; having a program wait on the CPU while its I/O was being serviced was a waste of
+CPU time. Instead, why not switch to another job and run it for a while?
+The desire to support multiprogramming and overlap in the presence
+of I/O and interrupts forced innovation in the conceptual development of
+operating systems along a number of directions. Issues such as memory
+protection became important; we wouldn’t want one program to be able
+to access the memory of another program. Understanding how to deal
+with the concurrency issues introduced by multiprogramming was also
+critical; making sure the OS was behaving correctly despite the presence
+of interrupts is a great challenge. We will study these issues and related
+topics later in the book.
+One of the major practical advances of the time was the introduction
+of the U NIX operating system, primarily thanks to Ken Thompson (and
+Dennis Ritchie) at Bell Labs (yes, the phone company). U NIX took many
+good ideas from different operating systems (particularly from Multics
+[O72], and some from systems like TENEX [B+72] and the Berkeley TimeSharing System [S+68]), but made them simpler and easier to use. Soon
+this team was shipping tapes containing U NIX source code to people
+around the world, many of whom then got involved and added to the
+system themselves; see the Aside (next page) for more detail10 .
+
+The Modern Era
+Beyond the minicomputer came a new type of machine, cheaper, faster,
+and for the masses: the personal computer, or PC as we call it today. Led
+by Apple’s early machines (e.g., the Apple II) and the IBM PC, this new
+breed of machine would soon become the dominant force in computing,
+10
+We’ll use asides and other related text boxes to call attention to various items that don’t
+quite fit the main flow of the text. Sometimes, we’ll even use them just to make a joke, because
+why not have a little fun along the way? Yes, many of the jokes are bad.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+15
+
+A SIDE : T HE I MPORTANCE OF U NIX
+It is difficult to overstate the importance of U NIX in the history of operating systems. Influenced by earlier systems (in particular, the famous
+Multics system from MIT), U NIX brought together many great ideas and
+made a system that was both simple and powerful.
+Underlying the original “Bell Labs” U NIX was the unifying principle of
+building small powerful programs that could be connected together to
+form larger workflows. The shell, where you type commands, provided
+primitives such as pipes to enable such meta-level programming, and
+thus it became easy to string together programs to accomplish a bigger task. For example, to find lines of a text file that have the word
+“foo” in them, and then to count how many such lines exist, you would
+type: grep foo file.txt|wc -l, thus using the grep and wc (word
+count) programs to achieve your task.
+The U NIX environment was friendly for programmers and developers
+alike, also providing a compiler for the new C programming language.
+Making it easy for programmers to write their own programs, as well as
+share them, made U NIX enormously popular. And it probably helped a
+lot that the authors gave out copies for free to anyone who asked, an early
+form of open-source software.
+Also of critical importance was the accessibility and readability of the
+code. Having a beautiful, small kernel written in C invited others to play
+with the kernel, adding new and cool features. For example, an enterprising group at Berkeley, led by Bill Joy, made a wonderful distribution
+(the Berkeley Systems Distribution, or BSD) which had some advanced
+virtual memory, file system, and networking subsystems. Joy later cofounded Sun Microsystems.
+Unfortunately, the spread of U NIX was slowed a bit as companies tried to
+assert ownership and profit from it, an unfortunate (but common) result
+of lawyers getting involved. Many companies had their own variants:
+SunOS from Sun Microsystems, AIX from IBM, HPUX (a.k.a. “H-Pucks”)
+from HP, and IRIX from SGI. The legal wrangling among AT&T/Bell
+Labs and these other players cast a dark cloud over U NIX, and many
+wondered if it would survive, especially as Windows was introduced and
+took over much of the PC market...
+as their low-cost enabled one machine per desktop instead of a shared
+minicomputer per workgroup.
+Unfortunately, for operating systems, the PC at first represented a
+great leap backwards, as early systems forgot (or never knew of) the
+lessons learned in the era of minicomputers. For example, early operating systems such as DOS (the Disk Operating System, from Microsoft)
+didn’t think memory protection was important; thus, a malicious (or perhaps just a poorly-programmed) application could scribble all over mem-
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+16
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+A SIDE : A ND T HEN C AME L INUX
+Fortunately for U NIX, a young Finnish hacker named Linus Torvalds decided to write his own version of U NIX which borrowed heavily on the
+principles and ideas behind the original system, but not from the code
+base, thus avoiding issues of legality. He enlisted help from many others
+around the world, took advantage of the sophisticated GNU tools that
+already existed [G85], and soon Linux was born (as well as the modern
+open-source software movement).
+As the internet era came into place, most companies (such as Google,
+Amazon, Facebook, and others) chose to run Linux, as it was free and
+could be readily modified to suit their needs; indeed, it is hard to imagine the success of these new companies had such a system not existed.
+As smart phones became a dominant user-facing platform, Linux found
+a stronghold there too (via Android), for many of the same reasons. And
+Steve Jobs took his U NIX-based NeXTStep operating environment with
+him to Apple, thus making U NIX popular on desktops (though many
+users of Apple technology are probably not even aware of this fact). Thus
+U NIX lives on, more important today than ever before. The computing
+gods, if you believe in them, should be thanked for this wonderful outcome.
+
+ory. The first generations of the Mac OS (v9 and earlier) took a cooperative approach to job scheduling; thus, a thread that accidentally got stuck
+in an infinite loop could take over the entire system, forcing a reboot. The
+painful list of OS features missing in this generation of systems is long,
+too long for a full discussion here.
+Fortunately, after some years of suffering, the old features of minicomputer operating systems started to find their way onto the desktop.
+For example, Mac OS X/macOS has U NIX at its core, including all of the
+features one would expect from such a mature system. Windows has similarly adopted many of the great ideas in computing history, starting in
+particular with Windows NT, a great leap forward in Microsoft OS technology. Even today’s cell phones run operating systems (such as Linux)
+that are much more like what a minicomputer ran in the 1970s than what
+a PC ran in the 1980s (thank goodness); it is good to see that the good
+ideas developed in the heyday of OS development have found their way
+into the modern world. Even better is that these ideas continue to develop, providing more features and making modern systems even better
+for users and applications.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+17
+
+2.7 Summary
+Thus, we have an introduction to the OS. Today’s operating systems
+make systems relatively easy to use, and virtually all operating systems
+you use today have been influenced by the developments we will discuss
+throughout the book.
+Unfortunately, due to time constraints, there are a number of parts of
+the OS we won’t cover in the book. For example, there is a lot of networking code in the operating system; we leave it to you to take the networking class to learn more about that. Similarly, graphics devices are
+particularly important; take the graphics course to expand your knowledge in that direction. Finally, some operating system books talk a great
+deal about security; we will do so in the sense that the OS must provide
+protection between running programs and give users the ability to protect their files, but we won’t delve into deeper security issues that one
+might find in a security course.
+However, there are many important topics that we will cover, including the basics of virtualization of the CPU and memory, concurrency, and
+persistence via devices and file systems. Don’t worry! While there is a
+lot of ground to cover, most of it is quite cool, and at the end of the road,
+you’ll have a new appreciation for how computer systems really work.
+Now get to work!
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+18
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+References
+[BS+09] “Tolerating File-System Mistakes with EnvyFS” by L. Bairavasundaram, S. Sundararaman, A. Arpaci-Dusseau, R. Arpaci-Dusseau. USENIX ’09, San Diego, CA, June 2009. A fun
+paper about using multiple file systems at once to tolerate a mistake in any one of them.
+[BH00] “The Evolution of Operating Systems” by P. Brinch Hansen. In ’Classic Operating
+Systems: From Batch Processing to Distributed Systems.’ Springer-Verlag, New York, 2000.
+This essay provides an intro to a wonderful collection of papers about historically significant systems.
+[B+72] “TENEX, A Paged Time Sharing System for the PDP-10” by D. Bobrow, J. Burchfiel, D.
+Murphy, R. Tomlinson. CACM, Volume 15, Number 3, March 1972. TENEX has much of the
+machinery found in modern operating systems; read more about it to see how much innovation was
+already in place in the early 1970’s.
+[B75] “The Mythical Man-Month” by F. Brooks. Addison-Wesley, 1975. A classic text on software
+engineering; well worth the read.
+[BOH10] “Computer Systems: A Programmer’s Perspective” by R. Bryant and D. O’Hallaron.
+Addison-Wesley, 2010. Another great intro to how computer systems work. Has a little bit of overlap
+with this book — so if you’d like, you can skip the last few chapters of that book, or simply read them to
+get a different perspective on some of the same material. After all, one good way to build up your own
+knowledge is to hear as many other perspectives as possible, and then develop your own opinion and
+thoughts on the matter. You know, by thinking!
+[G85] “The GNU Manifesto” by R. Stallman. 1985. www.gnu.org/gnu/manifesto.html.
+A huge part of Linux’s success was no doubt the presence of an excellent compiler, gcc, and other
+relevant pieces of open software, thanks to the GNU effort headed by Stallman. Stallman is a visionary
+when it comes to open source, and this manifesto lays out his thoughts as to why.
+[K+61] “One-Level Storage System” by T. Kilburn, D.B.G. Edwards, M.J. Lanigan, F.H. Sumner.
+IRE Transactions on Electronic Computers, April 1962. The Atlas pioneered much of what you see
+in modern systems. However, this paper is not the best read. If you were to only read one, you might
+try the historical perspective below [L78].
+[L78] “The Manchester Mark I and Atlas: A Historical Perspective” by S. H. Lavington. Communications of the ACM, Volume 21:1, January 1978. A nice piece of history on the early development of computer systems and the pioneering efforts of the Atlas. Of course, one could go back and
+read the Atlas papers themselves, but this paper provides a great overview and adds some historical
+perspective.
+[O72] “The Multics System: An Examination of its Structure” by Elliott Organick. MIT Press,
+1972. A great overview of Multics. So many good ideas, and yet it was an over-designed system,
+shooting for too much, and thus never really worked. A classic example of what Fred Brooks would call
+the “second-system effect” [B75].
+[PP03] “Introduction to Computing Systems: From Bits and Gates to C and Beyond” by Yale
+N. Patt, Sanjay J. Patel. McGraw-Hill, 2003. One of our favorite intro to computing systems books.
+Starts at transistors and gets you all the way up to C; the early material is particularly great.
+[RT74] “The U NIX Time-Sharing System” by Dennis M. Ritchie, Ken Thompson. CACM, Volume 17: 7, July 1974. A great summary of U NIX written as it was taking over the world of computing,
+by the people who wrote it.
+[S68] “SDS 940 Time-Sharing System” by Scientific Data Systems. TECHNICAL MANUAL,
+SDS 90 11168, August 1968. Yes, a technical manual was the best we could find. But it is fascinating
+to read these old system documents, and see how much was already in place in the late 1960’s. One of
+the minds behind the Berkeley Time-Sharing System (which eventually became the SDS system) was
+Butler Lampson, who later won a Turing award for his contributions in systems.
+[SS+10] “Membrane: Operating System Support for Restartable File Systems” by S. Sundararaman, S. Subramanian, A. Rajimwale, A. Arpaci-Dusseau, R. Arpaci-Dusseau, M. Swift. FAST
+’10, San Jose, CA, February 2010. The great thing about writing your own class notes: you can advertise your own research. But this paper is actually pretty neat — when a file system hits a bug and
+crashes, Membrane auto-magically restarts it, all without applications or the rest of the system being
+affected.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTRODUCTION TO O PERATING S YSTEMS
+
+19
+
+Homework
+Most (and eventually, all) chapters of this book have homework sections at the end. Doing these homeworks is important, as each lets you,
+the reader, gain more experience with the concepts presented within the
+chapter.
+There are two types of homeworks. The first is based on simulation. A
+simulation of a computer system is just a simple program that pretends to
+do some of the interesting parts of what a real system does, and then report some output metrics to show how the system behaves. For example,
+a hard drive simulator might take a series of requests, simulate how long
+they would take to get serviced by a hard drive with certain performance
+characteristics, and then report the average latency of the requests.
+The cool thing about simulations is they let you easily explore how
+systems behave without the difficulty of running a real system. Indeed,
+they even let you create systems that cannot exist in the real world (for
+example, a hard drive with unimaginably fast performance), and thus see
+the potential impact of future technologies.
+Of course, simulations are not without their downsides. By their very
+nature, simulations are just approximations of how a real system behaves.
+If an important aspect of real-world behavior is omitted, the simulation
+will report bad results. Thus, results from a simulation should always be
+treated with some suspicion. In the end, how a system behaves in the real
+world is what matters.
+The second type of homework requires interaction with real-world
+code. Some of these homeworks are measurement focused, whereas others just require some small-scale development and experimentation. Both
+are just small forays into the larger world you should be getting into,
+which is how to write systems code in C on U NIX-based systems. Indeed,
+larger-scale projects, which go beyond these homeworks, are needed to
+push you in this direction; thus, beyond just doing homeworks, we strongly
+recommend you do projects to solidify your systems skills. See this page
+(https://github.com/remzi-arpacidusseau/ostep-projects)
+for some projects.
+To do these homeworks, you likely have to be on a U NIX-based machine, running either Linux, macOS, or some similar system. It should
+also have a C compiler installed (e.g., gcc) as well as Python. You should
+also know how to edit code in a real code editor of some kind.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+

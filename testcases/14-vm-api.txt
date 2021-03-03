@@ -1,0 +1,478 @@
+14
+Interlude: Memory API
+
+In this interlude, we discuss the memory allocation interfaces in U NIX
+systems. The interfaces provided are quite simple, and hence the chapter
+is short and to the point1 . The main problem we address is this:
+C RUX : H OW T O A LLOCATE A ND M ANAGE M EMORY
+In U NIX/C programs, understanding how to allocate and manage
+memory is critical in building robust and reliable software. What interfaces are commonly used? What mistakes should be avoided?
+
+14.1 Types of Memory
+In running a C program, there are two types of memory that are allocated. The first is called stack memory, and allocations and deallocations
+of it are managed implicitly by the compiler for you, the programmer; for
+this reason it is sometimes called automatic memory.
+Declaring memory on the stack in C is easy. For example, let’s say you
+need some space in a function func() for an integer, called x. To declare
+such a piece of memory, you just do something like this:
+void func() {
+int x; // declares an integer on the stack
+...
+}
+The compiler does the rest, making sure to make space on the stack
+when you call into func(). When you return from the function, the compiler deallocates the memory for you; thus, if you want some information
+to live beyond the call invocation, you had better not leave that information on the stack.
+1
+
+Indeed, we hope all chapters are! But this one is shorter and pointier, we think.
+
+1
+
+2
+
+I NTERLUDE : M EMORY API
+
+It is this need for long-lived memory that gets us to the second type
+of memory, called heap memory, where all allocations and deallocations
+are explicitly handled by you, the programmer. A heavy responsibility,
+no doubt! And certainly the cause of many bugs. But if you are careful
+and pay attention, you will use such interfaces correctly and without too
+much trouble. Here is an example of how one might allocate an integer
+on the heap:
+void func() {
+int *x = (int *) malloc(sizeof(int));
+...
+}
+A couple of notes about this small code snippet. First, you might notice that both stack and heap allocation occur on this line: first the compiler knows to make room for a pointer to an integer when it sees your
+declaration of said pointer (int *x); subsequently, when the program
+calls malloc(), it requests space for an integer on the heap; the routine
+returns the address of such an integer (upon success, or NULL on failure),
+which is then stored on the stack for use by the program.
+Because of its explicit nature, and because of its more varied usage,
+heap memory presents more challenges to both users and systems. Thus,
+it is the focus of the remainder of our discussion.
+
+14.2
+
+The malloc() Call
+The malloc() call is quite simple: you pass it a size asking for some
+room on the heap, and it either succeeds and gives you back a pointer to
+the newly-allocated space, or fails and returns NULL2 .
+The manual page shows what you need to do to use malloc; type man
+malloc at the command line and you will see:
+#include <stdlib.h>
+...
+void *malloc(size_t size);
+From this information, you can see that all you need to do is include
+the header file stdlib.h to use malloc. In fact, you don’t really need to
+even do this, as the C library, which all C programs link with by default,
+has the code for malloc() inside of it; adding the header just lets the
+compiler check whether you are calling malloc() correctly (e.g., passing
+the right number of arguments to it, of the right type).
+The single parameter malloc() takes is of type size t which simply describes how many bytes you need. However, most programmers
+do not type in a number here directly (such as 10); indeed, it would be
+considered poor form to do so. Instead, various routines and macros are
+2
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+Note that NULL in C isn’t really anything special at all, just a macro for the value zero.
+
+WWW. OSTEP. ORG
+
+I NTERLUDE : M EMORY API
+
+3
+
+T IP : W HEN I N D OUBT, T RY I T O UT
+If you aren’t sure how some routine or operator you are using behaves,
+there is no substitute for simply trying it out and making sure it behaves
+as you expect. While reading the manual pages or other documentation
+is useful, how it works in practice is what matters. Write some code and
+test it! That is no doubt the best way to make sure your code behaves as
+you desire. Indeed, that is what we did to double-check the things we
+were saying about sizeof() were actually true!
+
+utilized. For example, to allocate space for a double-precision floating
+point value, you simply do this:
+double *d = (double *) malloc(sizeof(double));
+Wow, that’s lot of double-ing! This invocation of malloc() uses the
+sizeof() operator to request the right amount of space; in C, this is
+generally thought of as a compile-time operator, meaning that the actual
+size is known at compile time and thus a number (in this case, 8, for a
+double) is substituted as the argument to malloc(). For this reason,
+sizeof() is correctly thought of as an operator and not a function call
+(a function call would take place at run time).
+You can also pass in the name of a variable (and not just a type) to
+sizeof(), but in some cases you may not get the desired results, so be
+careful. For example, let’s look at the following code snippet:
+int *x = malloc(10 * sizeof(int));
+printf("%d\n", sizeof(x));
+In the first line, we’ve declared space for an array of 10 integers, which
+is fine and dandy. However, when we use sizeof() in the next line,
+it returns a small value, such as 4 (on 32-bit machines) or 8 (on 64-bit
+machines). The reason is that in this case, sizeof() thinks we are simply asking how big a pointer to an integer is, not how much memory we
+have dynamically allocated. However, sometimes sizeof() does work
+as you might expect:
+int x[10];
+printf("%d\n", sizeof(x));
+In this case, there is enough static information for the compiler to
+know that 40 bytes have been allocated.
+Another place to be careful is with strings. When declaring space for a
+string, use the following idiom: malloc(strlen(s) + 1), which gets
+the length of the string using the function strlen(), and adds 1 to it
+in order to make room for the end-of-string character. Using sizeof()
+may lead to trouble here.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+4
+
+I NTERLUDE : M EMORY API
+
+You might also notice that malloc() returns a pointer to type void.
+Doing so is just the way in C to pass back an address and let the programmer decide what to do with it. The programmer further helps out
+by using what is called a cast; in our example above, the programmer
+casts the return type of malloc() to a pointer to a double. Casting
+doesn’t really accomplish anything, other than tell the compiler and other
+programmers who might be reading your code: “yeah, I know what I’m
+doing.” By casting the result of malloc(), the programmer is just giving
+some reassurance; the cast is not needed for the correctness.
+
+14.3
+
+The free() Call
+As it turns out, allocating memory is the easy part of the equation;
+knowing when, how, and even if to free memory is the hard part. To free
+heap memory that is no longer in use, programmers simply call free():
+int *x = malloc(10 * sizeof(int));
+...
+free(x);
+The routine takes one argument, a pointer returned by malloc().
+Thus, you might notice, the size of the allocated region is not passed in
+by the user, and must be tracked by the memory-allocation library itself.
+
+14.4
+
+Common Errors
+There are a number of common errors that arise in the use of malloc()
+and free(). Here are some we’ve seen over and over again in teaching
+the undergraduate operating systems course. All of these examples compile and run with nary a peep from the compiler; while compiling a C
+program is necessary to build a correct C program, it is far from sufficient, as you will learn (often in the hard way).
+Correct memory management has been such a problem, in fact, that
+many newer languages have support for automatic memory management. In such languages, while you call something akin to malloc()
+to allocate memory (usually new or something similar to allocate a new
+object), you never have to call something to free space; rather, a garbage
+collector runs and figures out what memory you no longer have references to and frees it for you.
+
+Forgetting To Allocate Memory
+Many routines expect memory to be allocated before you call them. For
+example, the routine strcpy(dst, src) copies a string from a source
+pointer to a destination pointer. However, if you are not careful, you
+might do this:
+char *src = "hello";
+char *dst;
+// oops! unallocated
+strcpy(dst, src); // segfault and die
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTERLUDE : M EMORY API
+
+5
+
+T IP : I T C OMPILED O R I T R AN 6= I T I S C ORRECT
+Just because a program compiled(!) or even ran once or many times correctly does not mean the program is correct. Many events may have conspired to get you to a point where you believe it works, but then something changes and it stops. A common student reaction is to say (or yell)
+“But it worked before!” and then blame the compiler, operating system,
+hardware, or even (dare we say it) the professor. But the problem is usually right where you think it would be, in your code. Get to work and
+debug it before you blame those other components.
+When you run this code, it will likely lead to a segmentation fault3 ,
+which is a fancy term for YOU DID SOMETHING WRONG WITH
+MEMORY YOU FOOLISH PROGRAMMER AND I AM ANGRY.
+In this case, the proper code might instead look like this:
+char *src = "hello";
+char *dst = (char *) malloc(strlen(src) + 1);
+strcpy(dst, src); // work properly
+Alternately, you could use strdup() and make your life even easier.
+Read the strdup man page for more information.
+
+Not Allocating Enough Memory
+A related error is not allocating enough memory, sometimes called a buffer
+overflow. In the example above, a common error is to make almost enough
+room for the destination buffer.
+char *src = "hello";
+char *dst = (char *) malloc(strlen(src)); // too small!
+strcpy(dst, src); // work properly
+Oddly enough, depending on how malloc is implemented and many
+other details, this program will often run seemingly correctly. In some
+cases, when the string copy executes, it writes one byte too far past the
+end of the allocated space, but in some cases this is harmless, perhaps
+overwriting a variable that isn’t used anymore. In some cases, these overflows can be incredibly harmful, and in fact are the source of many security vulnerabilities in systems [W06]. In other cases, the malloc library
+allocated a little extra space anyhow, and thus your program actually
+doesn’t scribble on some other variable’s value and works quite fine. In
+even other cases, the program will indeed fault and crash. And thus we
+learn another valuable lesson: even though it ran correctly once, doesn’t
+mean it’s correct.
+3
+Although it sounds arcane, you will soon learn why such an illegal memory access is
+called a segmentation fault; if that isn’t incentive to read on, what is?
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+6
+
+I NTERLUDE : M EMORY API
+
+Forgetting to Initialize Allocated Memory
+With this error, you call malloc() properly, but forget to fill in some values into your newly-allocated data type. Don’t do this! If you do forget,
+your program will eventually encounter an uninitialized read, where it
+reads from the heap some data of unknown value. Who knows what
+might be in there? If you’re lucky, some value such that the program still
+works (e.g., zero). If you’re not lucky, something random and harmful.
+
+Forgetting To Free Memory
+Another common error is known as a memory leak, and it occurs when
+you forget to free memory. In long-running applications or systems (such
+as the OS itself), this is a huge problem, as slowly leaking memory eventually leads one to run out of memory, at which point a restart is required.
+Thus, in general, when you are done with a chunk of memory, you should
+make sure to free it. Note that using a garbage-collected language doesn’t
+help here: if you still have a reference to some chunk of memory, no
+garbage collector will ever free it, and thus memory leaks remain a problem even in more modern languages.
+In some cases, it may seem like not calling free() is reasonable. For
+example, your program is short-lived, and will soon exit; in this case,
+when the process dies, the OS will clean up all of its allocated pages and
+thus no memory leak will take place per se. While this certainly “works”
+(see the aside on page 7), it is probably a bad habit to develop, so be wary
+of choosing such a strategy. In the long run, one of your goals as a programmer is to develop good habits; one of those habits is understanding
+how you are managing memory, and (in languages like C), freeing the
+blocks you have allocated. Even if you can get away with not doing so,
+it is probably good to get in the habit of freeing each and every byte you
+explicitly allocate.
+
+Freeing Memory Before You Are Done With It
+Sometimes a program will free memory before it is finished using it; such
+a mistake is called a dangling pointer, and it, as you can guess, is also a
+bad thing. The subsequent use can crash the program, or overwrite valid
+memory (e.g., you called free(), but then called malloc() again to
+allocate something else, which then recycles the errantly-freed memory).
+
+Freeing Memory Repeatedly
+Programs also sometimes free memory more than once; this is known as
+the double free. The result of doing so is undefined. As you can imagine, the memory-allocation library might get confused and do all sorts of
+weird things; crashes are a common outcome.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTERLUDE : M EMORY API
+
+7
+
+A SIDE : W HY N O M EMORY I S L EAKED O NCE Y OUR P ROCESS E XITS
+When you write a short-lived program, you might allocate some space
+using malloc(). The program runs and is about to complete: is there
+need to call free() a bunch of times just before exiting? While it seems
+wrong not to, no memory will be “lost” in any real sense. The reason is
+simple: there are really two levels of memory management in the system.
+The first level of memory management is performed by the OS, which
+hands out memory to processes when they run, and takes it back when
+processes exit (or otherwise die). The second level of management
+is within each process, for example within the heap when you call
+malloc() and free(). Even if you fail to call free() (and thus leak
+memory in the heap), the operating system will reclaim all the memory of
+the process (including those pages for code, stack, and, as relevant here,
+heap) when the program is finished running. No matter what the state
+of your heap in your address space, the OS takes back all of those pages
+when the process dies, thus ensuring that no memory is lost despite the
+fact that you didn’t free it.
+Thus, for short-lived programs, leaking memory often does not cause any
+operational problems (though it may be considered poor form). When
+you write a long-running server (such as a web server or database management system, which never exit), leaked memory is a much bigger issue, and will eventually lead to a crash when the application runs out of
+memory. And of course, leaking memory is an even larger issue inside
+one particular program: the operating system itself. Showing us once
+again: those who write the kernel code have the toughest job of all...
+
+Calling free() Incorrectly
+One last problem we discuss is the call of free() incorrectly. After all,
+free() expects you only to pass to it one of the pointers you received
+from malloc() earlier. When you pass in some other value, bad things
+can (and do) happen. Thus, such invalid frees are dangerous and of
+course should also be avoided.
+
+Summary
+As you can see, there are lots of ways to abuse memory. Because of frequent errors with memory, a whole ecosphere of tools have developed to
+help find such problems in your code. Check out both purify [HJ92] and
+valgrind [SN05]; both are excellent at helping you locate the source of
+your memory-related problems. Once you become accustomed to using
+these powerful tools, you will wonder how you survived without them.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+8
+
+14.5
+
+I NTERLUDE : M EMORY API
+
+Underlying OS Support
+You might have noticed that we haven’t been talking about system
+calls when discussing malloc() and free(). The reason for this is simple: they are not system calls, but rather library calls. Thus the malloc library manages space within your virtual address space, but itself is built
+on top of some system calls which call into the OS to ask for more memory or release some back to the system.
+One such system call is called brk, which is used to change the location of the program’s break: the location of the end of the heap. It takes
+one argument (the address of the new break), and thus either increases or
+decreases the size of the heap based on whether the new break is larger
+or smaller than the current break. An additional call sbrk is passed an
+increment but otherwise serves a similar purpose.
+Note that you should never directly call either brk or sbrk. They
+are used by the memory-allocation library; if you try to use them, you
+will likely make something go (horribly) wrong. Stick to malloc() and
+free() instead.
+Finally, you can also obtain memory from the operating system via the
+mmap() call. By passing in the correct arguments, mmap() can create an
+anonymous memory region within your program — a region which is not
+associated with any particular file but rather with swap space, something
+we’ll discuss in detail later on in virtual memory. This memory can then
+also be treated like a heap and managed as such. Read the manual page
+of mmap() for more details.
+
+14.6
+
+Other Calls
+There are a few other calls that the memory-allocation library supports. For example, calloc() allocates memory and also zeroes it before returning; this prevents some errors where you assume that memory
+is zeroed and forget to initialize it yourself (see the paragraph on “uninitialized reads” above). The routine realloc() can also be useful, when
+you’ve allocated space for something (say, an array), and then need to
+add something to it: realloc() makes a new larger region of memory,
+copies the old region into it, and returns the pointer to the new region.
+
+14.7
+
+Summary
+We have introduced some of the APIs dealing with memory allocation.
+As always, we have just covered the basics; more details are available
+elsewhere. Read the C book [KR88] and Stevens [SR05] (Chapter 7) for
+more information. For a cool modern paper on how to detect and correct
+many of these problems automatically, see Novark et al. [N+07]; this
+paper also contains a nice summary of common problems and some neat
+ideas on how to find and fix them.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTERLUDE : M EMORY API
+
+9
+
+References
+[HJ92] “Purify: Fast Detection of Memory Leaks and Access Errors” by R. Hastings, B. Joyce.
+USENIX Winter ’92. The paper behind the cool Purify tool, now a commercial product.
+[KR88] “The C Programming Language” by Brian Kernighan, Dennis Ritchie. Prentice-Hall
+1988. The C book, by the developers of C. Read it once, do some programming, then read it again, and
+then keep it near your desk or wherever you program.
+[N+07] “Exterminator: Automatically Correcting Memory Errors with High Probability” by
+G. Novark, E. D. Berger, B. G. Zorn. PLDI 2007, San Diego, California. A cool paper on finding
+and correcting memory errors automatically, and a great overview of many common errors in C and
+C++ programs. An extended version of this paper is available CACM (Volume 51, Issue 12, December
+2008).
+[SN05] “Using Valgrind to Detect Undefined Value Errors with Bit-precision” by J. Seward, N.
+Nethercote. USENIX ’05. How to use valgrind to find certain types of errors.
+[SR05] “Advanced Programming in the U NIX Environment” by W. Richard Stevens, Stephen
+A. Rago. Addison-Wesley, 2005. We’ve said it before, we’ll say it again: read this book many times
+and use it as a reference whenever you are in doubt. The authors are always surprised at how each time
+they read something in this book, they learn something new, even after many years of C programming.
+[W06] “Survey on Buffer Overflow Attacks and Countermeasures” by T. Werthman. Available: www.nds.rub.de/lehre/seminar/SS06/Werthmann BufferOverflow.pdf. A nice survey of
+buffer overflows and some of the security problems they cause. Refers to many of the famous exploits.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+10
+
+I NTERLUDE : M EMORY API
+
+Homework (Code)
+In this homework, you will gain some familiarity with memory allocation. First, you’ll write some buggy programs (fun!). Then, you’ll use
+some tools to help you find the bugs you inserted. Then, you will realize
+how awesome these tools are and use them in the future, thus making
+yourself more happy and productive. The tools are the debugger (e.g.,
+gdb) and a memory-bug detector called valgrind [SN05].
+
+Questions
+1. First, write a simple program called null.c that creates a pointer
+to an integer, sets it to NULL, and then tries to dereference it. Compile this into an executable called null. What happens when you
+run this program?
+2. Next, compile this program with symbol information included (with
+the -g flag). Doing so let’s put more information into the executable, enabling the debugger to access more useful information
+about variable names and the like. Run the program under the debugger by typing gdb null and then, once gdb is running, typing
+run. What does gdb show you?
+3. Finally, use the valgrind tool on this program. We’ll use the memcheck
+tool that is a part of valgrind to analyze what happens. Run
+this by typing in the following: valgrind --leak-check=yes
+null. What happens when you run this? Can you interpret the
+output from the tool?
+4. Write a simple program that allocates memory using malloc() but
+forgets to free it before exiting. What happens when this program
+runs? Can you use gdb to find any problems with it? How about
+valgrind (again with the --leak-check=yes flag)?
+5. Write a program that creates an array of integers called data of size
+100 using malloc; then, set data[100] to zero. What happens
+when you run this program? What happens when you run this
+program using valgrind? Is the program correct?
+6. Create a program that allocates an array of integers (as above), frees
+them, and then tries to print the value of one of the elements of
+the array. Does the program run? What happens when you use
+valgrind on it?
+7. Now pass a funny value to free (e.g., a pointer in the middle of the
+array you allocated above). What happens? Do you need tools to
+find this type of problem?
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+I NTERLUDE : M EMORY API
+
+11
+
+8. Try out some of the other interfaces to memory allocation. For example, create a simple vector-like data structure and related routines that use realloc() to manage the vector. Use an array to
+store the vectors elements; when a user adds an entry to the vector, use realloc() to allocate more space for it. How well does
+such a vector perform? How does it compare to a linked list? Use
+valgrind to help you find bugs.
+9. Spend more time and read about using gdb and valgrind. Knowing your tools is critical; spend the time and learn how to become
+an expert debugger in the U NIX and C environment.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+

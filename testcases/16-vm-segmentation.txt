@@ -1,0 +1,688 @@
+16
+Segmentation
+
+So far we have been putting the entire address space of each process in
+memory. With the base and bounds registers, the OS can easily relocate
+processes to different parts of physical memory. However, you might
+have noticed something interesting about these address spaces of ours:
+there is a big chunk of “free” space right in the middle, between the stack
+and the heap.
+As you can imagine from Figure 16.1, although the space between the
+stack and heap is not being used by the process, it is still taking up physical memory when we relocate the entire address space somewhere in
+physical memory; thus, the simple approach of using a base and bounds
+register pair to virtualize memory is wasteful. It also makes it quite hard
+to run a program when the entire address space doesn’t fit into memory;
+thus, base and bounds is not as flexible as we would like. And thus:
+T HE C RUX : H OW T O S UPPORT A L ARGE A DDRESS S PACE
+How do we support a large address space with (potentially) a lot of
+free space between the stack and the heap? Note that in our examples,
+with tiny (pretend) address spaces, the waste doesn’t seem too bad. Imagine, however, a 32-bit address space (4 GB in size); a typical program will
+only use megabytes of memory, but still would demand that the entire
+address space be resident in memory.
+
+16.1 Segmentation: Generalized Base/Bounds
+To solve this problem, an idea was born, and it is called segmentation. It is quite an old idea, going at least as far back as the very early
+1960’s [H61, G62]. The idea is simple: instead of having just one base
+and bounds pair in our MMU, why not have a base and bounds pair per
+logical segment of the address space? A segment is just a contiguous
+portion of the address space of a particular length, and in our canonical
+1
+
+2
+
+S EGMENTATION
+0KB
+1KB
+
+Program Code
+
+2KB
+3KB
+4KB
+5KB
+Heap
+6KB
+7KB
+
+(free)
+
+14KB
+15KB
+Stack
+16KB
+
+Figure 16.1: An Address Space (Again)
+address space, we have three logically-different segments: code, stack,
+and heap. What segmentation allows the OS to do is to place each one
+of those segments in different parts of physical memory, and thus avoid
+filling physical memory with unused virtual address space.
+Let’s look at an example. Assume we want to place the address space
+from Figure 16.1 into physical memory. With a base and bounds pair
+per segment, we can place each segment independently in physical memory. For example, see Figure 16.2 (page 3); there you see a 64KB physical
+memory with those three segments in it (and 16KB reserved for the OS).
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+S EGMENTATION
+
+3
+0KB
+Operating System
+16KB
+(not in use)
+Stack
+
+32KB
+
+48KB
+
+(not in use)
+Code
+Heap
+
+(not in use)
+
+64KB
+
+Figure 16.2: Placing Segments In Physical Memory
+As you can see in the diagram, only used memory is allocated space
+in physical memory, and thus large address spaces with large amounts of
+unused address space (which we sometimes call sparse address spaces)
+can be accommodated.
+The hardware structure in our MMU required to support segmentation is just what you’d expect: in this case, a set of three base and bounds
+register pairs. Figure 16.3 below shows the register values for the example above; each bounds register holds the size of a segment.
+Segment
+Code
+Heap
+Stack
+
+Base
+32K
+34K
+28K
+
+Size
+2K
+3K
+2K
+
+Figure 16.3: Segment Register Values
+You can see from the figure that the code segment is placed at physical
+address 32KB and has a size of 2KB and the heap segment is placed at
+34KB and has a size of 3KB. The size segment here is exactly the same as
+the bounds register introduced previously; it tells the hardware exactly
+how many bytes are valid in this segment (and thus, enables the hardware to determine when a program has made an illegal access outside of
+those bounds).
+Let’s do an example translation, using the address space in Figure 16.1.
+Assume a reference is made to virtual address 100 (which is in the code
+segment, as you can see visually in Figure 16.1, page 2). When the refer-
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+4
+
+S EGMENTATION
+
+A SIDE : T HE S EGMENTATION FAULT
+The term segmentation fault or violation arises from a memory access
+on a segmented machine to an illegal address. Humorously, the term
+persists, even on machines with no support for segmentation at all. Or
+not so humorously, if you can’t figure out why your code keeps faulting.
+ence takes place (say, on an instruction fetch), the hardware will add the
+base value to the offset into this segment (100 in this case) to arrive at the
+desired physical address: 100 + 32KB, or 32868. It will then check that the
+address is within bounds (100 is less than 2KB), find that it is, and issue
+the reference to physical memory address 32868.
+Now let’s look at an address in the heap, virtual address 4200 (again
+refer to Figure 16.1). If we just add the virtual address 4200 to the base
+of the heap (34KB), we get a physical address of 39016, which is not the
+correct physical address. What we need to first do is extract the offset into
+the heap, i.e., which byte(s) in this segment the address refers to. Because
+the heap starts at virtual address 4KB (4096), the offset of 4200 is actually
+4200 minus 4096, or 104. We then take this offset (104) and add it to the
+base register physical address (34K) to get the desired result: 34920.
+What if we tried to refer to an illegal address (i.e., a virtual address of
+7KB or greater), which is beyond the end of the heap? You can imagine
+what will happen: the hardware detects that the address is out of bounds,
+traps into the OS, likely leading to the termination of the offending process. And now you know the origin of the famous term that all C programmers learn to dread: the segmentation violation or segmentation
+fault.
+
+16.2
+
+Which Segment Are We Referring To?
+The hardware uses segment registers during translation. How does it
+know the offset into a segment, and to which segment an address refers?
+One common approach, sometimes referred to as an explicit approach,
+is to chop up the address space into segments based on the top few bits
+of the virtual address; this technique was used in the VAX/VMS system
+[LL82]. In our example above, we have three segments; thus we need two
+bits to accomplish our task. If we use the top two bits of our 14-bit virtual
+address to select the segment, our virtual address looks like this:
+13 12 11 10 9
+
+Segment
+
+8
+
+7
+
+6
+
+5
+
+4
+
+3
+
+2
+
+1
+
+0
+
+Offset
+
+In our example, then, if the top two bits are 00, the hardware knows
+the virtual address is in the code segment, and thus uses the code base
+and bounds pair to relocate the address to the correct physical location.
+If the top two bits are 01, the hardware knows the address is in the heap,
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+S EGMENTATION
+
+5
+
+and thus uses the heap base and bounds. Let’s take our example heap
+virtual address from above (4200) and translate it, just to make sure this
+is clear. The virtual address 4200, in binary form, can be seen here:
+13 12 11 10 9
+
+8
+
+7
+
+6
+
+5
+
+4
+
+3
+
+2
+
+1
+
+0
+
+0 1 0 0 0 0 0 1 1 0 1 0 0 0
+Segment
+
+Offset
+
+As you can see from the picture, the top two bits (01) tell the hardware
+which segment we are referring to. The bottom 12 bits are the offset into
+the segment: 0000 0110 1000, or hex 0x068, or 104 in decimal. Thus, the
+hardware simply takes the first two bits to determine which segment register to use, and then takes the next 12 bits as the offset into the segment.
+By adding the base register to the offset, the hardware arrives at the final physical address. Note the offset eases the bounds check too: we can
+simply check if the offset is less than the bounds; if not, the address is illegal. Thus, if base and bounds were arrays (with one entry per segment),
+the hardware would be doing something like this to obtain the desired
+physical address:
+1
+2
+3
+4
+5
+6
+7
+8
+9
+
+// get top 2 bits of 14-bit VA
+Segment = (VirtualAddress & SEG_MASK) >> SEG_SHIFT
+// now get offset
+Offset = VirtualAddress & OFFSET_MASK
+if (Offset >= Bounds[Segment])
+RaiseException(PROTECTION_FAULT)
+else
+PhysAddr = Base[Segment] + Offset
+Register = AccessMemory(PhysAddr)
+In our running example, we can fill in values for the constants above.
+Specifically, SEG MASK would be set to 0x3000, SEG SHIFT to 12, and
+OFFSET MASK to 0xFFF.
+You may also have noticed that when we use the top two bits, and we
+only have three segments (code, heap, stack), one segment of the address
+space goes unused. To fully utilize the virtual address space (and avoid
+an unused segment), some systems put code in the same segment as the
+heap and thus use only one bit to select which segment to use [LL82].
+Another issue with using the top so many bits to select a segment is
+that it limits use of the virtual address space. Specifically, each segment
+is limited to a maximum size, which in our example is 4KB (using the top
+two bits to choose segments implies the 16KB address space gets chopped
+into four pieces, or 4KB in this example). If a running program wishes to
+grow a segment (say the heap, or the stack) beyond that maximum, the
+program is out of luck.
+There are other ways for the hardware to determine which segment
+a particular address is in. In the implicit approach, the hardware deter-
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+6
+
+S EGMENTATION
+
+mines the segment by noticing how the address was formed. If, for example, the address was generated from the program counter (i.e., it was
+an instruction fetch), then the address is within the code segment; if the
+address is based off of the stack or base pointer, it must be in the stack
+segment; any other address must be in the heap.
+
+16.3
+
+What About The Stack?
+Thus far, we’ve left out one important component of the address space:
+the stack. The stack has been relocated to physical address 28KB in the
+diagram above, but with one critical difference: it grows backwards (i.e.,
+towards lower addresses). In physical memory, it “starts” at 28KB1 and
+grows back to 26KB, corresponding to virtual addresses 16KB to 14KB;
+translation must proceed differently.
+The first thing we need is a little extra hardware support. Instead of
+just base and bounds values, the hardware also needs to know which way
+the segment grows (a bit, for example, that is set to 1 when the segment
+grows in the positive direction, and 0 for negative). Our updated view of
+what the hardware tracks is seen in Figure 16.4:
+Segment
+Code00
+Heap01
+Stack11
+
+Base
+32K
+34K
+28K
+
+Size (max 4K)
+2K
+3K
+2K
+
+Grows Positive?
+1
+1
+0
+
+Figure 16.4: Segment Registers (With Negative-Growth Support)
+With the hardware understanding that segments can grow in the negative direction, the hardware must now translate such virtual addresses
+slightly differently. Let’s take an example stack virtual address and translate it to understand the process.
+In this example, assume we wish to access virtual address 15KB, which
+should map to physical address 27KB. Our virtual address, in binary
+form, thus looks like this: 11 1100 0000 0000 (hex 0x3C00). The hardware uses the top two bits (11) to designate the segment, but then we are
+left with an offset of 3KB. To obtain the correct negative offset, we must
+subtract the maximum segment size from 3KB: in this example, a segment can be 4KB, and thus the correct negative offset is 3KB minus 4KB
+which equals -1KB. We simply add the negative offset (-1KB) to the base
+(28KB) to arrive at the correct physical address: 27KB. The bounds check
+can be calculated by ensuring the absolute value of the negative offset is
+less than or equal to the segment’s current size (in this case, 2KB).
+1
+Although we say, for simplicity, that the stack “starts” at 28KB, this value is actually the
+byte just below the location of the backward growing region; the first valid byte is actually
+28KB minus 1. In contrast, forward-growing regions start at the address of the first byte of the
+segment. We take this approach because it makes the math to compute the physical address
+straightforward: the physical address is just the base plus the negative offset.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+S EGMENTATION
+
+7
+
+16.4 Support for Sharing
+As support for segmentation grew, system designers soon realized that
+they could realize new types of efficiencies with a little more hardware
+support. Specifically, to save memory, sometimes it is useful to share
+certain memory segments between address spaces. In particular, code
+sharing is common and still in use in systems today.
+To support sharing, we need a little extra support from the hardware,
+in the form of protection bits. Basic support adds a few bits per segment,
+indicating whether or not a program can read or write a segment, or perhaps execute code that lies within the segment. By setting a code segment
+to read-only, the same code can be shared across multiple processes, without worry of harming isolation; while each process still thinks that it is accessing its own private memory, the OS is secretly sharing memory which
+cannot be modified by the process, and thus the illusion is preserved.
+An example of the additional information tracked by the hardware
+(and OS) is shown in Figure 16.5. As you can see, the code segment is
+set to read and execute, and thus the same physical segment in memory
+could be mapped into multiple virtual address spaces.
+Segment
+Code00
+Heap01
+Stack11
+
+Base
+32K
+34K
+28K
+
+Size (max 4K)
+2K
+3K
+2K
+
+Grows Positive?
+1
+1
+0
+
+Protection
+Read-Execute
+Read-Write
+Read-Write
+
+Figure 16.5: Segment Register Values (with Protection)
+With protection bits, the hardware algorithm described earlier would
+also have to change. In addition to checking whether a virtual address is
+within bounds, the hardware also has to check whether a particular access
+is permissible. If a user process tries to write to a read-only segment, or
+execute from a non-executable segment, the hardware should raise an
+exception, and thus let the OS deal with the offending process.
+
+16.5 Fine-grained vs. Coarse-grained Segmentation
+Most of our examples thus far have focused on systems with just a
+few segments (i.e., code, stack, heap); we can think of this segmentation
+as coarse-grained, as it chops up the address space into relatively large,
+coarse chunks. However, some early systems (e.g., Multics [CV65,DD68])
+were more flexible and allowed for address spaces to consist of a large
+number of smaller segments, referred to as fine-grained segmentation.
+Supporting many segments requires even further hardware support,
+with a segment table of some kind stored in memory. Such segment tables usually support the creation of a very large number of segments, and
+thus enable a system to use segments in more flexible ways than we have
+thus far discussed. For example, early machines like the Burroughs B5000
+had support for thousands of segments, and expected a compiler to chop
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+8
+
+S EGMENTATION
+
+0KB
+8KB
+
+Not Compacted
+Operating System
+
+16KB
+
+0KB
+8KB
+
+Compacted
+Operating System
+
+16KB
+(not in use)
+
+24KB
+
+24KB
+Allocated
+
+Allocated
+32KB
+
+(not in use)
+Allocated
+
+40KB
+48KB
+
+(not in use)
+
+56KB
+
+32KB
+40KB
+48KB
+(not in use)
+56KB
+
+Allocated
+64KB
+
+64KB
+
+Figure 16.6: Non-compacted and Compacted Memory
+code and data into separate segments which the OS and hardware would
+then support [RK68]. The thinking at the time was that by having finegrained segments, the OS could better learn about which segments are in
+use and which are not and thus utilize main memory more effectively.
+
+16.6
+
+OS Support
+You now should have a basic idea as to how segmentation works.
+Pieces of the address space are relocated into physical memory as the
+system runs, and thus a huge savings of physical memory is achieved
+relative to our simpler approach with just a single base/bounds pair for
+the entire address space. Specifically, all the unused space between the
+stack and the heap need not be allocated in physical memory, allowing
+us to fit more address spaces into physical memory and support a large
+and sparse virtual address space per process.
+However, segmentation raises a number of new issues for the operating system. The first is an old one: what should the OS do on a context
+switch? You should have a good guess by now: the segment registers
+must be saved and restored. Clearly, each process has its own virtual address space, and the OS must make sure to set up these registers correctly
+before letting the process run again.
+The second is OS interaction when segments grow (or perhaps shrink).
+For example, a program may call malloc() to allocate an object. In
+some cases, the existing heap will be able to service the request, and thus
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+S EGMENTATION
+
+9
+
+T IP : I F 1000 S OLUTIONS E XIST, N O G REAT O NE D OES
+The fact that so many different algorithms exist to try to minimize external fragmentation is indicative of a stronger underlying truth: there is no
+one “best” way to solve the problem. Thus, we settle for something reasonable and hope it is good enough. The only real solution (as we will
+see in forthcoming chapters) is to avoid the problem altogether, by never
+allocating memory in variable-sized chunks.
+
+malloc() will find free space for the object and return a pointer to it to
+the caller. In others, however, the heap segment itself may need to grow.
+In this case, the memory-allocation library will perform a system call to
+grow the heap (e.g., the traditional U NIX sbrk() system call). The OS
+will then (usually) provide more space, updating the segment size register to the new (bigger) size, and informing the library of success; the
+library can then allocate space for the new object and return successfully
+to the calling program. Do note that the OS could reject the request, if no
+more physical memory is available, or if it decides that the calling process
+already has too much.
+The last, and perhaps most important, issue is managing free space in
+physical memory. When a new address space is created, the OS has to be
+able to find space in physical memory for its segments. Previously, we
+assumed that each address space was the same size, and thus physical
+memory could be thought of as a bunch of slots where processes would
+fit in. Now, we have a number of segments per process, and each segment
+might be a different size.
+The general problem that arises is that physical memory quickly becomes full of little holes of free space, making it difficult to allocate new
+segments, or to grow existing ones. We call this problem external fragmentation [R69]; see Figure 16.6 (left).
+In the example, a process comes along and wishes to allocate a 20KB
+segment. In that example, there is 24KB free, but not in one contiguous
+segment (rather, in three non-contiguous chunks). Thus, the OS cannot
+satisfy the 20KB request. Similar problems could occur when a request to
+grow a segment arrives; if the next so many bytes of physical space are
+not available, the OS will have to reject the request, even though there
+may be free bytes available elsewhere in physical memory.
+One solution to this problem would be to compact physical memory
+by rearranging the existing segments. For example, the OS could stop
+whichever processes are running, copy their data to one contiguous region of memory, change their segment register values to point to the
+new physical locations, and thus have a large free extent of memory with
+which to work. By doing so, the OS enables the new allocation request
+to succeed. However, compaction is expensive, as copying segments is
+memory-intensive and generally uses a fair amount of processor time; see
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+10
+
+S EGMENTATION
+
+Figure 16.6 (right) for a diagram of compacted physical memory. Compaction also (ironically) makes requests to grow existing segments hard to
+serve, and may thus cause further rearrangement to accommodate such
+requests.
+A simpler approach might instead be to use a free-list management
+algorithm that tries to keep large extents of memory available for allocation. There are literally hundreds of approaches that people have taken,
+including classic algorithms like best-fit (which keeps a list of free spaces
+and returns the one closest in size that satisfies the desired allocation to
+the requester), worst-fit, first-fit, and more complex schemes like buddy
+algorithm [K68]. An excellent survey by Wilson et al. is a good place to
+start if you want to learn more about such algorithms [W+95], or you can
+wait until we cover some of the basics in a later chapter. Unfortunately,
+though, no matter how smart the algorithm, external fragmentation will
+still exist; thus, a good algorithm simply attempts to minimize it.
+
+16.7
+
+Summary
+Segmentation solves a number of problems, and helps us build a more
+effective virtualization of memory. Beyond just dynamic relocation, segmentation can better support sparse address spaces, by avoiding the huge
+potential waste of memory between logical segments of the address space.
+It is also fast, as doing the arithmetic segmentation requires is easy and
+well-suited to hardware; the overheads of translation are minimal. A
+fringe benefit arises too: code sharing. If code is placed within a separate segment, such a segment could potentially be shared across multiple
+running programs.
+However, as we learned, allocating variable-sized segments in memory leads to some problems that we’d like to overcome. The first, as discussed above, is external fragmentation. Because segments are variablesized, free memory gets chopped up into odd-sized pieces, and thus satisfying a memory-allocation request can be difficult. One can try to use
+smart algorithms [W+95] or periodically compact memory, but the problem is fundamental and hard to avoid.
+The second and perhaps more important problem is that segmentation
+still isn’t flexible enough to support our fully generalized, sparse address
+space. For example, if we have a large but sparsely-used heap all in one
+logical segment, the entire heap must still reside in memory in order to be
+accessed. In other words, if our model of how the address space is being
+used doesn’t exactly match how the underlying segmentation has been
+designed to support it, segmentation doesn’t work very well. We thus
+need to find some new solutions. Ready to find them?
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+S EGMENTATION
+
+11
+
+References
+[CV65] “Introduction and Overview of the Multics System” by F. J. Corbato, V. A. Vyssotsky.
+Fall Joint Computer Conference, 1965. One of five papers presented on Multics at the Fall Joint
+Computer Conference; oh to be a fly on the wall in that room that day!
+[DD68] “Virtual Memory, Processes, and Sharing in Multics” by Robert C. Daley and Jack B.
+Dennis. Communications of the ACM, Volume 11:5, May 1968. An early paper on how to perform
+dynamic linking in Multics, which was way ahead of its time. Dynamic linking finally found its way
+back into systems about 20 years later, as the large X-windows libraries demanded it. Some say that
+these large X11 libraries were MIT’s revenge for removing support for dynamic linking in early versions
+of U NIX!
+[G62] “Fact Segmentation” by M. N. Greenfield. Proceedings of the SJCC, Volume 21, May
+1962. Another early paper on segmentation; so early that it has no references to other work.
+[H61] “Program Organization and Record Keeping for Dynamic Storage” by A. W. Holt. Communications of the ACM, Volume 4:10, October 1961. An incredibly early and difficult to read paper
+about segmentation and some of its uses.
+[I09] “Intel 64 and IA-32 Architectures Software Developer’s Manuals” by Intel. 2009. Available: http://www.intel.com/products/processor/manuals. Try reading about segmentation in
+here (Chapter 3 in Volume 3a); it’ll hurt your head, at least a little bit.
+[K68] “The Art of Computer Programming: Volume I” by Donald Knuth. Addison-Wesley,
+1968. Knuth is famous not only for his early books on the Art of Computer Programming but for his
+typesetting system TeX which is still a powerhouse typesetting tool used by professionals today, and
+indeed to typeset this very book. His tomes on algorithms are a great early reference to many of the
+algorithms that underly computing systems today.
+[L83] “Hints for Computer Systems Design” by Butler Lampson. ACM Operating Systems
+Review, 15:5, October 1983. A treasure-trove of sage advice on how to build systems. Hard to read in
+one sitting; take it in a little at a time, like a fine wine, or a reference manual.
+[LL82] “Virtual Memory Management in the VAX/VMS Operating System” by Henry M. Levy,
+Peter H. Lipman. IEEE Computer, Volume 15:3, March 1982. A classic memory management
+system, with lots of common sense in its design. We’ll study it in more detail in a later chapter.
+[RK68] “Dynamic Storage Allocation Systems” by B. Randell and C.J. Kuehner. Communications of the ACM, Volume 11:5, May 1968. A nice overview of the differences between paging and
+segmentation, with some historical discussion of various machines.
+[R69] “A note on storage fragmentation and program segmentation” by Brian Randell. Communications of the ACM, Volume 12:7, July 1969. One of the earliest papers to discuss fragmentation.
+[W+95] “Dynamic Storage Allocation: A Survey and Critical Review” by Paul R. Wilson, Mark
+S. Johnstone, Michael Neely, David Boles. International Workshop on Memory Management,
+Scotland, UK, September 1995. A great survey paper on memory allocators.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+12
+
+S EGMENTATION
+
+Homework (Simulation)
+This program allows you to see how address translations are performed
+in a system with segmentation. See the README for details.
+
+Questions
+1. First let’s use a tiny address space to translate some addresses. Here’s
+a simple set of parameters with a few different random seeds; can
+you translate the addresses?
+segmentation.py -a 128 -p 512 -b 0 -l 20 -B 512
+-L 20 -s 0
+segmentation.py -a 128 -p 512 -b 0 -l 20 -B 512
+-L 20 -s 1
+segmentation.py -a 128 -p 512 -b 0 -l 20 -B 512
+-L 20 -s 2
+2. Now, let’s see if we understand this tiny address space we’ve constructed (using the parameters from the question above). What is
+the highest legal virtual address in segment 0? What about the lowest legal virtual address in segment 1? What are the lowest and
+highest illegal addresses in this entire address space? Finally, how
+would you run segmentation.py with the -A flag to test if you
+are right?
+3. Let’s say we have a tiny 16-byte address space in a 128-byte physical
+memory. What base and bounds would you set up so as to get
+the simulator to generate the following translation results for the
+specified address stream: valid, valid, violation, ..., violation, valid,
+valid? Assume the following parameters:
+segmentation.py -a 16 -p 128
+-A 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+--b0 ? --l0 ? --b1 ? --l1 ?
+4. Assume we want to generate a problem where roughly 90% of the
+randomly-generated virtual addresses are valid (not segmentation
+violations). How should you configure the simulator to do so?
+Which parameters are important to getting this outcome?
+5. Can you run the simulator such that no virtual addresses are valid?
+How?
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+

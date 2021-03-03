@@ -1,0 +1,726 @@
+7
+Scheduling: Introduction
+
+By now low-level mechanisms of running processes (e.g., context switching) should be clear; if they are not, go back a chapter or two, and read the
+description of how that stuff works again. However, we have yet to understand the high-level policies that an OS scheduler employs. We will
+now do just that, presenting a series of scheduling policies (sometimes
+called disciplines) that various smart and hard-working people have developed over the years.
+The origins of scheduling, in fact, predate computer systems; early
+approaches were taken from the field of operations management and applied to computers. This reality should be no surprise: assembly lines
+and many other human endeavors also require scheduling, and many of
+the same concerns exist therein, including a laser-like desire for efficiency.
+And thus, our problem:
+T HE C RUX : H OW T O D EVELOP S CHEDULING P OLICY
+How should we develop a basic framework for thinking about
+scheduling policies? What are the key assumptions? What metrics are
+important? What basic approaches have been used in the earliest of computer systems?
+
+7.1 Workload Assumptions
+Before getting into the range of possible policies, let us first make a
+number of simplifying assumptions about the processes running in the
+system, sometimes collectively called the workload. Determining the
+workload is a critical part of building policies, and the more you know
+about workload, the more fine-tuned your policy can be.
+The workload assumptions we make here are mostly unrealistic, but
+that is alright (for now), because we will relax them as we go, and eventually develop what we will refer to as ... (dramatic pause) ...
+
+1
+
+2
+
+S CHEDULING : I NTRODUCTION
+
+a fully-operational scheduling discipline1 .
+We will make the following assumptions about the processes, sometimes called jobs, that are running in the system:
+1.
+2.
+3.
+4.
+5.
+
+Each job runs for the same amount of time.
+All jobs arrive at the same time.
+Once started, each job runs to completion.
+All jobs only use the CPU (i.e., they perform no I/O)
+The run-time of each job is known.
+
+We said many of these assumptions were unrealistic, but just as some
+animals are more equal than others in Orwell’s Animal Farm [O45], some
+assumptions are more unrealistic than others in this chapter. In particular, it might bother you that the run-time of each job is known: this would
+make the scheduler omniscient, which, although it would be great (probably), is not likely to happen anytime soon.
+
+7.2
+
+Scheduling Metrics
+Beyond making workload assumptions, we also need one more thing
+to enable us to compare different scheduling policies: a scheduling metric. A metric is just something that we use to measure something, and
+there are a number of different metrics that make sense in scheduling.
+For now, however, let us also simplify our life by simply having a single metric: turnaround time. The turnaround time of a job is defined
+as the time at which the job completes minus the time at which the job
+arrived in the system. More formally, the turnaround time Tturnaround is:
+Tturnaround = Tcompletion − Tarrival
+
+(7.1)
+
+Because we have assumed that all jobs arrive at the same time, for now
+Tarrival = 0 and hence Tturnaround = Tcompletion . This fact will change
+as we relax the aforementioned assumptions.
+You should note that turnaround time is a performance metric, which
+will be our primary focus this chapter. Another metric of interest is fairness, as measured (for example) by Jain’s Fairness Index [J91]. Performance and fairness are often at odds in scheduling; a scheduler, for example, may optimize performance but at the cost of preventing a few jobs
+from running, thus decreasing fairness. This conundrum shows us that
+life isn’t always perfect.
+
+7.3
+
+First In, First Out (FIFO)
+The most basic algorithm we can implement is known as First In, First
+Out (FIFO) scheduling or sometimes First Come, First Served (FCFS).
+1
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+Said in the same way you would say “A fully-operational Death Star.”
+
+WWW. OSTEP. ORG
+
+S CHEDULING : I NTRODUCTION
+
+3
+
+FIFO has a number of positive properties: it is clearly simple and thus
+easy to implement. And, given our assumptions, it works pretty well.
+Let’s do a quick example together. Imagine three jobs arrive in the
+system, A, B, and C, at roughly the same time (Tarrival = 0). Because
+FIFO has to put some job first, let’s assume that while they all arrived
+simultaneously, A arrived just a hair before B which arrived just a hair
+before C. Assume also that each job runs for 10 seconds. What will the
+average turnaround time be for these jobs?
+A
+
+0
+
+B
+
+C
+
+20
+
+40
+
+60
+Time
+
+80
+
+100
+
+120
+
+Figure 7.1: FIFO Simple Example
+From Figure 7.1, you can see that A finished at 10, B at 20, and C at 30.
+Thus, the average turnaround time for the three jobs is simply 10+20+30
+=
+3
+20. Computing turnaround time is as easy as that.
+Now let’s relax one of our assumptions. In particular, let’s relax assumption 1, and thus no longer assume that each job runs for the same
+amount of time. How does FIFO perform now? What kind of workload
+could you construct to make FIFO perform poorly?
+(think about this before reading on ... keep thinking ... got it?!)
+Presumably you’ve figured this out by now, but just in case, let’s do
+an example to show how jobs of different lengths can lead to trouble for
+FIFO scheduling. In particular, let’s again assume three jobs (A, B, and
+C), but this time A runs for 100 seconds while B and C run for 10 each.
+A
+
+0
+
+20
+
+40
+
+B
+
+60
+Time
+
+80
+
+100
+
+C
+
+120
+
+Figure 7.2: Why FIFO Is Not That Great
+As you can see in Figure 7.2, Job A runs first for the full 100 seconds
+before B or C even get a chance to run. Thus, the average turnaround
+= 110).
+time for the system is high: a painful 110 seconds ( 100+110+120
+3
+This problem is generally referred to as the convoy effect [B+79], where
+a number of relatively-short potential consumers of a resource get queued
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+4
+
+S CHEDULING : I NTRODUCTION
+
+T IP : T HE P RINCIPLE OF SJF
+Shortest Job First represents a general scheduling principle that can be
+applied to any system where the perceived turnaround time per customer
+(or, in our case, a job) matters. Think of any line you have waited in: if
+the establishment in question cares about customer satisfaction, it is likely
+they have taken SJF into account. For example, grocery stores commonly
+have a “ten-items-or-less” line to ensure that shoppers with only a few
+things to purchase don’t get stuck behind the family preparing for some
+upcoming nuclear winter.
+behind a heavyweight resource consumer. This scheduling scenario might
+remind you of a single line at a grocery store and what you feel like when
+you see the person in front of you with three carts full of provisions and
+a checkbook out; it’s going to be a while2 .
+So what should we do? How can we develop a better algorithm to
+deal with our new reality of jobs that run for different amounts of time?
+Think about it first; then read on.
+
+7.4
+
+Shortest Job First (SJF)
+It turns out that a very simple approach solves this problem; in fact
+it is an idea stolen from operations research [C54,PV56] and applied to
+scheduling of jobs in computer systems. This new scheduling discipline
+is known as Shortest Job First (SJF), and the name should be easy to
+remember because it describes the policy quite completely: it runs the
+shortest job first, then the next shortest, and so on.
+B
+
+0
+
+C
+
+A
+
+20
+
+40
+
+60
+Time
+
+80
+
+100
+
+120
+
+Figure 7.3: SJF Simple Example
+Let’s take our example above but with SJF as our scheduling policy.
+Figure 7.3 shows the results of running A, B, and C. Hopefully the diagram makes it clear why SJF performs much better with regards to average turnaround time. Simply by running B and C before A, SJF reduces
+= 50), more than
+average turnaround from 110 seconds to 50 ( 10+20+120
+3
+a factor of two improvement.
+2
+Recommended action in this case: either quickly switch to a different line, or take a long,
+deep, and relaxing breath. That’s right, breathe in, breathe out. It will be OK, don’t worry.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+S CHEDULING : I NTRODUCTION
+
+5
+
+A SIDE : P REEMPTIVE S CHEDULERS
+In the old days of batch computing, a number of non-preemptive schedulers were developed; such systems would run each job to completion
+before considering whether to run a new job. Virtually all modern schedulers are preemptive, and quite willing to stop one process from running in order to run another. This implies that the scheduler employs the
+mechanisms we learned about previously; in particular, the scheduler can
+perform a context switch, stopping one running process temporarily and
+resuming (or starting) another.
+In fact, given our assumptions about jobs all arriving at the same time,
+we could prove that SJF is indeed an optimal scheduling algorithm. However, you are in a systems class, not theory or operations research; no
+proofs are allowed.
+Thus we arrive upon a good approach to scheduling with SJF, but our
+assumptions are still fairly unrealistic. Let’s relax another. In particular,
+we can target assumption 2, and now assume that jobs can arrive at any
+time instead of all at once. What problems does this lead to?
+(Another pause to think ... are you thinking? Come on, you can do it)
+Here we can illustrate the problem again with an example. This time,
+assume A arrives at t = 0 and needs to run for 100 seconds, whereas B
+and C arrive at t = 10 and each need to run for 10 seconds. With pure
+SJF, we’d get the schedule seen in Figure 7.4.
+[B,C arrive]
+
+0
+
+A
+
+20
+
+40
+
+B
+
+60
+Time
+
+80
+
+100
+
+C
+
+120
+
+Figure 7.4: SJF With Late Arrivals From B and C
+As you can see from the figure, even though B and C arrived shortly
+after A, they still are forced to wait until A has completed, and thus suffer
+the same convoy problem. Average turnaround time for these three jobs
+). What can a scheduler do?
+is 103.33 seconds ( 100+(110−10)+(120−10)
+3
+
+7.5 Shortest Time-to-Completion First (STCF)
+To address this concern, we need to relax assumption 3 (that jobs must
+run to completion), so let’s do that. We also need some machinery within
+the scheduler itself. As you might have guessed, given our previous discussion about timer interrupts and context switching, the scheduler can
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+6
+
+S CHEDULING : I NTRODUCTION
+[B,C arrive]
+
+A
+
+0
+
+B
+
+C
+
+20
+
+A
+
+40
+
+60
+Time
+
+80
+
+100
+
+120
+
+Figure 7.5: STCF Simple Example
+certainly do something else when B and C arrive: it can preempt job A
+and decide to run another job, perhaps continuing A later. SJF by our definition is a non-preemptive scheduler, and thus suffers from the problems
+described above.
+Fortunately, there is a scheduler which does exactly that: add preemption to SJF, known as the Shortest Time-to-Completion First (STCF) or
+Preemptive Shortest Job First (PSJF) scheduler [CK68]. Any time a new
+job enters the system, the STCF scheduler determines which of the remaining jobs (including the new job) has the least time left, and schedules
+that one. Thus, in our example, STCF would preempt A and run B and C
+to completion; only when they are finished would A’s remaining time be
+scheduled. Figure 7.5 shows an example.
+The result is a much-improved average turnaround time: 50 seconds
+). And as before, given our new assumptions,
+( (120−0)+(20−10)+(30−10)
+3
+STCF is provably optimal; given that SJF is optimal if all jobs arrive at
+the same time, you should probably be able to see the intuition behind
+the optimality of STCF.
+
+7.6
+
+A New Metric: Response Time
+Thus, if we knew job lengths, and that jobs only used the CPU, and our
+only metric was turnaround time, STCF would be a great policy. In fact,
+for a number of early batch computing systems, these types of scheduling
+algorithms made some sense. However, the introduction of time-shared
+machines changed all that. Now users would sit at a terminal and demand interactive performance from the system as well. And thus, a new
+metric was born: response time.
+We define response time as the time from when the job arrives in a
+system to the first time it is scheduled3 . More formally:
+Tresponse = Tf irstrun − Tarrival
+
+(7.2)
+
+3
+Some define it slightly differently, e.g., to also include the time until the job produces
+some kind of “response”; our definition is the best-case version of this, essentially assuming
+that the job produces a response instantaneously.
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+S CHEDULING : I NTRODUCTION
+
+A
+
+0
+
+B
+
+5
+
+7
+
+C
+
+10
+
+15
+Time
+
+20
+
+25
+
+30
+
+Figure 7.6: SJF Again (Bad for Response Time)
+ABCABCABCABCABC
+
+0
+
+5
+
+10
+
+15
+Time
+
+20
+
+25
+
+30
+
+Figure 7.7: Round Robin (Good For Response Time)
+For example, if we had the schedule above (with A arriving at time 0,
+and B and C at time 10), the response time of each job is as follows: 0 for
+job A, 0 for B, and 10 for C (average: 3.33).
+As you might be thinking, STCF and related disciplines are not particularly good for response time. If three jobs arrive at the same time,
+for example, the third job has to wait for the previous two jobs to run in
+their entirety before being scheduled just once. While great for turnaround
+time, this approach is quite bad for response time and interactivity. Indeed, imagine sitting at a terminal, typing, and having to wait 10 seconds
+to see a response from the system just because some other job got scheduled in front of yours: not too pleasant.
+Thus, we are left with another problem: how can we build a scheduler
+that is sensitive to response time?
+
+7.7 Round Robin
+To solve this problem, we will introduce a new scheduling algorithm,
+classically referred to as Round-Robin (RR) scheduling [K64]. The basic
+idea is simple: instead of running jobs to completion, RR runs a job for a
+time slice (sometimes called a scheduling quantum) and then switches
+to the next job in the run queue. It repeatedly does so until the jobs are
+finished. For this reason, RR is sometimes called time-slicing. Note that
+the length of a time slice must be a multiple of the timer-interrupt period;
+thus if the timer interrupts every 10 milliseconds, the time slice could be
+10, 20, or any other multiple of 10 ms.
+To understand RR in more detail, let’s look at an example. Assume
+three jobs A, B, and C arrive at the same time in the system, and that
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+8
+
+S CHEDULING : I NTRODUCTION
+
+T IP : A MORTIZATION C AN R EDUCE C OSTS
+The general technique of amortization is commonly used in systems
+when there is a fixed cost to some operation. By incurring that cost less
+often (i.e., by performing the operation fewer times), the total cost to the
+system is reduced. For example, if the time slice is set to 10 ms, and the
+context-switch cost is 1 ms, roughly 10% of time is spent context switching and is thus wasted. If we want to amortize this cost, we can increase
+the time slice, e.g., to 100 ms. In this case, less than 1% of time is spent
+context switching, and thus the cost of time-slicing has been amortized.
+they each wish to run for 5 seconds. An SJF scheduler runs each job to
+completion before running another (Figure 7.6). In contrast, RR with a
+time-slice of 1 second would cycle through the jobs quickly (Figure 7.7).
+The average response time of RR is: 0+1+2
+= 1; for SJF, average re3
+=
+5.
+sponse time is: 0+5+10
+3
+As you can see, the length of the time slice is critical for RR. The shorter
+it is, the better the performance of RR under the response-time metric.
+However, making the time slice too short is problematic: suddenly the
+cost of context switching will dominate overall performance. Thus, deciding on the length of the time slice presents a trade-off to a system designer, making it long enough to amortize the cost of switching without
+making it so long that the system is no longer responsive.
+Note that the cost of context switching does not arise solely from the
+OS actions of saving and restoring a few registers. When programs run,
+they build up a great deal of state in CPU caches, TLBs, branch predictors,
+and other on-chip hardware. Switching to another job causes this state
+to be flushed and new state relevant to the currently-running job to be
+brought in, which may exact a noticeable performance cost [MB91].
+RR, with a reasonable time slice, is thus an excellent scheduler if response time is our only metric. But what about our old friend turnaround
+time? Let’s look at our example above again. A, B, and C, each with running times of 5 seconds, arrive at the same time, and RR is the scheduler
+with a (long) 1-second time slice. We can see from the picture above that
+A finishes at 13, B at 14, and C at 15, for an average of 14. Pretty awful!
+It is not surprising, then, that RR is indeed one of the worst policies if
+turnaround time is our metric. Intuitively, this should make sense: what
+RR is doing is stretching out each job as long as it can, by only running
+each job for a short bit before moving to the next. Because turnaround
+time only cares about when jobs finish, RR is nearly pessimal, even worse
+than simple FIFO in many cases.
+More generally, any policy (such as RR) that is fair, i.e., that evenly divides the CPU among active processes on a small time scale, will perform
+poorly on metrics such as turnaround time. Indeed, this is an inherent
+trade-off: if you are willing to be unfair, you can run shorter jobs to completion, but at the cost of response time; if you instead value fairness,
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+S CHEDULING : I NTRODUCTION
+
+9
+
+T IP : O VERLAP E NABLES H IGHER U TILIZATION
+When possible, overlap operations to maximize the utilization of systems. Overlap is useful in many different domains, including when performing disk I/O or sending messages to remote machines; in either case,
+starting the operation and then switching to other work is a good idea,
+and improves the overall utilization and efficiency of the system.
+response time is lowered, but at the cost of turnaround time. This type of
+trade-off is common in systems; you can’t have your cake and eat it too4 .
+We have developed two types of schedulers. The first type (SJF, STCF)
+optimizes turnaround time, but is bad for response time. The second type
+(RR) optimizes response time but is bad for turnaround. And we still
+have two assumptions which need to be relaxed: assumption 4 (that jobs
+do no I/O), and assumption 5 (that the run-time of each job is known).
+Let’s tackle those assumptions next.
+
+7.8 Incorporating I/O
+First we will relax assumption 4 — of course all programs perform
+I/O. Imagine a program that didn’t take any input: it would produce the
+same output each time. Imagine one without output: it is the proverbial
+tree falling in the forest, with no one to see it; it doesn’t matter that it ran.
+A scheduler clearly has a decision to make when a job initiates an I/O
+request, because the currently-running job won’t be using the CPU during the I/O; it is blocked waiting for I/O completion. If the I/O is sent to
+a hard disk drive, the process might be blocked for a few milliseconds or
+longer, depending on the current I/O load of the drive. Thus, the scheduler should probably schedule another job on the CPU at that time.
+The scheduler also has to make a decision when the I/O completes.
+When that occurs, an interrupt is raised, and the OS runs and moves
+the process that issued the I/O from blocked back to the ready state. Of
+course, it could even decide to run the job at that point. How should the
+OS treat each job?
+To understand this issue better, let us assume we have two jobs, A and
+B, which each need 50 ms of CPU time. However, there is one obvious
+difference: A runs for 10 ms and then issues an I/O request (assume here
+that I/Os each take 10 ms), whereas B simply uses the CPU for 50 ms and
+performs no I/O. The scheduler runs A first, then B after (Figure 7.8).
+Assume we are trying to build a STCF scheduler. How should such a
+scheduler account for the fact that A is broken up into 5 10-ms sub-jobs,
+4
+A saying that confuses people, because it should be “You can’t keep your cake and eat it
+too” (which is kind of obvious, no?). Amazingly, there is a wikipedia page about this saying;
+even more amazingly, it is kind of fun to read [W15]. As they say in Italian, you can’t Avere la
+botte piena e la moglie ubriaca.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+10
+
+S CHEDULING : I NTRODUCTION
+
+A
+
+A
+
+A
+
+A
+
+A B B B B B
+
+CPU
+Disk
+0
+
+20
+
+40
+
+60
+
+80
+Time
+
+100
+
+120
+
+140
+
+Figure 7.8: Poor Use Of Resources
+A B A B A B A B A B
+CPU
+Disk
+0
+
+20
+
+40
+
+60
+
+80
+Time
+
+100
+
+120
+
+140
+
+Figure 7.9: Overlap Allows Better Use Of Resources
+whereas B is just a single 50-ms CPU demand? Clearly, just running one
+job and then the other without considering how to take I/O into account
+makes little sense.
+A common approach is to treat each 10-ms sub-job of A as an independent job. Thus, when the system starts, its choice is whether to schedule
+a 10-ms A or a 50-ms B. With STCF, the choice is clear: choose the shorter
+one, in this case A. Then, when the first sub-job of A has completed, only
+B is left, and it begins running. Then a new sub-job of A is submitted,
+and it preempts B and runs for 10 ms. Doing so allows for overlap, with
+the CPU being used by one process while waiting for the I/O of another
+process to complete; the system is thus better utilized (see Figure 7.9).
+And thus we see how a scheduler might incorporate I/O. By treating
+each CPU burst as a job, the scheduler makes sure processes that are “interactive” get run frequently. While those interactive jobs are performing
+I/O, other CPU-intensive jobs run, thus better utilizing the processor.
+
+7.9
+
+No More Oracle
+With a basic approach to I/O in place, we come to our final assumption: that the scheduler knows the length of each job. As we said before,
+this is likely the worst assumption we could make. In fact, in a generalpurpose OS (like the ones we care about), the OS usually knows very little
+about the length of each job. Thus, how can we build an approach that behaves like SJF/STCF without such a priori knowledge? Further, how can
+we incorporate some of the ideas we have seen with the RR scheduler so
+that response time is also quite good?
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+S CHEDULING : I NTRODUCTION
+
+11
+
+7.10 Summary
+We have introduced the basic ideas behind scheduling and developed
+two families of approaches. The first runs the shortest job remaining and
+thus optimizes turnaround time; the second alternates between all jobs
+and thus optimizes response time. Both are bad where the other is good,
+alas, an inherent trade-off common in systems. We have also seen how we
+might incorporate I/O into the picture, but have still not solved the problem of the fundamental inability of the OS to see into the future. Shortly,
+we will see how to overcome this problem, by building a scheduler that
+uses the recent past to predict the future. This scheduler is known as the
+multi-level feedback queue, and it is the topic of the next chapter.
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+12
+
+S CHEDULING : I NTRODUCTION
+
+References
+[B+79] “The Convoy Phenomenon” by M. Blasgen, J. Gray, M. Mitoma, T. Price. ACM Operating Systems Review, 13:2, April 1979. Perhaps the first reference to convoys, which occurs in
+databases as well as the OS.
+[C54] “Priority Assignment in Waiting Line Problems” by A. Cobham. Journal of Operations
+Research, 2:70, pages 70–76, 1954. The pioneering paper on using an SJF approach in scheduling the
+repair of machines.
+[K64] “Analysis of a Time-Shared Processor” by Leonard Kleinrock. Naval Research Logistics
+Quarterly, 11:1, pages 59–73, March 1964. May be the first reference to the round-robin scheduling
+algorithm; certainly one of the first analyses of said approach to scheduling a time-shared system.
+[CK68] “Computer Scheduling Methods and their Countermeasures” by Edward G. Coffman
+and Leonard Kleinrock. AFIPS ’68 (Spring), April 1968. An excellent early introduction to and
+analysis of a number of basic scheduling disciplines.
+[J91] “The Art of Computer Systems Performance Analysis: Techniques for Experimental Design, Measurement, Simulation, and Modeling” by R. Jain. Interscience, New York, April 1991.
+The standard text on computer systems measurement. A great reference for your library, for sure.
+[O45] “Animal Farm” by George Orwell. Secker and Warburg (London), 1945. A great but
+depressing allegorical book about power and its corruptions. Some say it is a critique of Stalin and the
+pre-WWII Stalin era in the U.S.S.R; we say it’s a critique of pigs.
+[PV56] “Machine Repair as a Priority Waiting-Line Problem” by Thomas E. Phipps Jr., W. R.
+Van Voorhis. Operations Research, 4:1, pages 76–86, February 1956. Follow-on work that generalizes the SJF approach to machine repair from Cobham’s original work; also postulates the utility of
+an STCF approach in such an environment. Specifically, “There are certain types of repair work, ...
+involving much dismantling and covering the floor with nuts and bolts, which certainly should not be
+interrupted once undertaken; in other cases it would be inadvisable to continue work on a long job if one
+or more short ones became available (p.81).”
+[MB91] “The effect of context switches on cache performance” by Jeffrey C. Mogul, Anita Borg.
+ASPLOS, 1991. A nice study on how cache performance can be affected by context switching; less of an
+issue in today’s systems where processors issue billions of instructions per second but context-switches
+still happen in the millisecond time range.
+[W15] “You can’t have your cake and eat it” by Authors: Unknown.. Wikipedia (as of December 2015). http://en.wikipedia.org/wiki/You can’t have your cake and eat it.
+The best part of this page is reading all the similar idioms from other languages. In Tamil, you can’t
+“have both the moustache and drink the soup.”
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+S CHEDULING : I NTRODUCTION
+
+13
+
+Homework (Simulation)
+This program, scheduler.py, allows you to see how different schedulers perform under scheduling metrics such as response time, turnaround
+time, and total wait time. See the README for details.
+
+Questions
+1. Compute the response time and turnaround time when running
+three jobs of length 200 with the SJF and FIFO schedulers.
+2. Now do the same but with jobs of different lengths: 100, 200, and
+300.
+3. Now do the same, but also with the RR scheduler and a time-slice
+of 1.
+4. For what types of workloads does SJF deliver the same turnaround
+times as FIFO?
+5. For what types of workloads and quantum lengths does SJF deliver
+the same response times as RR?
+6. What happens to response time with SJF as job lengths increase?
+Can you use the simulator to demonstrate the trend?
+7. What happens to response time with RR as quantum lengths increase? Can you write an equation that gives the worst-case response time, given N jobs?
+
+c 2008–19, A RPACI -D USSEAU
+
+T HREE
+E ASY
+P IECES
+
+

@@ -1,0 +1,66 @@
+52
+A Dialogue on Security
+Chapter by Peter Reiher (UCLA)
+Professor: Hello again, student!
+Student: I thought we were done with all this. We’ve already had three pillars,
+and I even stuck around for a few appendices. Will I never be done with this
+class?
+Professor: That depends on who I am. Some professors want to talk about
+security and some don’t. Unfortunately for you, given that you’re here, I’m one
+of those who want to.
+Student: OK, I suppose we’d better just get on with it.
+Professor: That’s the spirit! Soonest begun, soonest done. So, let’s say you
+have a peach...
+Student: You told me we were at least done with peaches!
+Professor: When one is discussing security, lies will always be a part of the
+discussion. Anyway, you’ve got a peach. You certainly wouldn’t want to turn
+around and find someone had stolen your peach, would you?
+Student: Well, if it isn’t as rotten as the one you ended up with, I suppose not.
+Professor: And you probably wouldn’t be any happier if you turned around
+and discovered someone had swapped out your peach for a turnip, either, would
+you?
+Student: I guess not, though I do know a couple of good recipes for turnips.
+Professor: And you also wouldn’t want somebody slapping your hand away
+every time you reached for your peach, right?
+Student: No, that would be pretty rude.
+Professor: You wouldn’t want that happening to any of the resources your computer controls, either. You might be even unhappier, if they’re really important
+resources. You wouldn’t want the love letter you’re in the middle of composing
+to leak out, you wouldn’t want someone to reset the saved state in your favorite
+game to take you back to the very beginning, and you would be mighty upset if,
+at midnight the evening before your project was due, you weren’t allowed to log
+into your computer.
+1
+
+2
+
+A D IALOGUE ON S ECURITY
+
+Student: True, those would all pretty much suck.
+Professor: Let’s try to keep a professional tone here. After all, this is a classroom. Kind of. That’s what operating system security is all about, and that’s
+what I’m here to tell you about. How can you ensure that secrets remain confidential? How can you guarantee the integrity of your important data? How
+can you ensure that you can use your computer resources when you want to?
+And these questions apply to all of the resources in your computer, all the time,
+forever.
+Student: All this sounds a little like reliability stuff we talked about before...
+Professor: Yes and no. Bad things can happen more or less by accident or
+through poor planning, and reliability is about those sorts of things. But we’re
+going a step further. SOMEBODY WANTS YOUR PEACH!!!!
+Student: Stop shouting! You were the one asking for a professional tone.
+Professor: My apologies, I get excited about this stuff sometimes. The point
+I was trying to make is that when we talk about security, we’re talking about
+genuine adversaries, human adversaries who are trying to make things go wrong
+for you. That has some big implications. They’re likely to be clever, malevolent,
+persistent, flexible, and sneaky. You may already feel like the universe has it in
+for you (most students feel that way, at any rate), but these folks really, truly are
+out to get you. You’re going to have to protect your assets despite anything they
+try.
+Student: This sounds challenging.
+Professor: You have no idea... But you will! YOU WILL!! (maniacal laughter)
+
+O PERATING
+S YSTEMS
+[V ERSION 1.01]
+
+WWW. OSTEP. ORG
+
+
