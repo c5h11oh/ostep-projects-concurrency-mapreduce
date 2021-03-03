@@ -68,36 +68,36 @@ int main(int argc, char *argv[]) {
     memset(pathname, 0, 1024);
 
     // Variate mappers
-    // assert(close(2) == 0);
-    // assert(open("testresult/stat-x-map-1-red.txt", O_WRONLY | O_CREAT | O_TRUNC) == 2);
-    // int i = 1;
-    // while(i <= num_mapper){
-    //     MR_Run_Wrapper(argc, argv, pathname, i, 1);
-    //     i <<= 1;
-    // }
+    assert(close(2) == 0);
+    assert(open("testresult/stat-x-map-1-red.txt", O_WRONLY | O_CREAT | O_TRUNC) == 2);
+    int i = 1;
+    while(i <= num_mapper){
+        MR_Run_Wrapper(argc, argv, pathname, i, 1);
+        i <<= 1;
+    }
     assert(close(2) == 0);
     assert(open("testresult/stat-x-map-M-red.txt", O_WRONLY | O_CREAT | O_TRUNC) == 2);
-    int i = 1;
+    i = 1;
     while(i <= num_mapper){
         MR_Run_Wrapper(argc, argv, pathname, i, num_reducer);
         i <<= 1;
     }
 
     // Variate reducers
-    // assert(close(2) == 0);
-    // assert(open("testresult/stat-1-map-x-red.txt", O_WRONLY | O_CREAT | O_TRUNC) == 2);
-    // i = 1;
-    // while(i <= num_mapper){
-    //     MR_Run_Wrapper(argc, argv, pathname, 1, i);
-    //     i <<= 1;
-    // }
-    // assert(close(2) == 0);
-    // assert(open("testresult/stat-M-map-x-red.txt", O_WRONLY | O_CREAT | O_TRUNC) == 2);
-    // i = 1;
-    // while(i <= num_mapper){
-    //     MR_Run_Wrapper(argc, argv, pathname, num_mapper, i);
-    //     i <<= 1;
-    // }
+    assert(close(2) == 0);
+    assert(open("testresult/stat-1-map-x-red.txt", O_WRONLY | O_CREAT | O_TRUNC) == 2);
+    i = 1;
+    while(i <= num_mapper){
+        MR_Run_Wrapper(argc, argv, pathname, 1, i);
+        i <<= 1;
+    }
+    assert(close(2) == 0);
+    assert(open("testresult/stat-M-map-x-red.txt", O_WRONLY | O_CREAT | O_TRUNC) == 2);
+    i = 1;
+    while(i <= num_mapper){
+        MR_Run_Wrapper(argc, argv, pathname, num_mapper, i);
+        i <<= 1;
+    }
 
     return 0;
 }
