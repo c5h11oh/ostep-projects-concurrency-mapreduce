@@ -1,0 +1,60 @@
+======================================
+INPUT_FILE_BUF_CAP:		4
+Number of Mappers:		1
+Number of Reducers:		1
+Number of input files:		31
+--------------------------------------
+Start time:		1784
+End time:		17820327
+Duration in sec:	17.819
+======================================
+======================================
+INPUT_FILE_BUF_CAP:		4
+Number of Mappers:		2
+Number of Reducers:		1
+Number of input files:		31
+--------------------------------------
+Start time:		17820656
+End time:		33656256
+Duration in sec:	15.836
+======================================
+======================================
+INPUT_FILE_BUF_CAP:		4
+Number of Mappers:		4
+Number of Reducers:		1
+Number of input files:		31
+--------------------------------------
+Start time:		33656443
+End time:		49910662
+Duration in sec:	16.254
+======================================
+======================================
+INPUT_FILE_BUF_CAP:		4
+Number of Mappers:		8
+Number of Reducers:		1
+Number of input files:		31
+--------------------------------------
+Start time:		49910842
+End time:		66846751
+Duration in sec:	16.936
+======================================
+======================================
+INPUT_FILE_BUF_CAP:		4
+Number of Mappers:		16
+Number of Reducers:		1
+Number of input files:		31
+--------------------------------------
+Start time:		66846961
+End time:		83381107
+Duration in sec:	16.534
+======================================
+======================================
+INPUT_FILE_BUF_CAP:		4
+Number of Mappers:		32
+Number of Reducers:		1
+Number of input files:		31
+--------------------------------------
+Start time:		83381397
+End time:		100906749
+Duration in sec:	17.525
+======================================
